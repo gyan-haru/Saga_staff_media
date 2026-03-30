@@ -1,0 +1,27 @@
+{% extends "admin/base.html" %}
+{% block title %}ダッシュボード - 管理画面{% endblock %}
+
+{% block content %}
+<h3>ダッシュボード</h3>
+<p>システムに登録されているデータの概要と、直近の企画一覧です。</p>
+
+<section style="margin-top: 2rem;">
+  <h4>最近の企画 (最新50件)</h4>
+  <ul style="list-style: none; padding: 0;">
+    {% for project in projects %}
+      <li style="margin-bottom: 0.5rem; border-bottom: 1px solid #eee; padding-bottom: 0.5rem;">
+        <span class="badge {{ 'badge-proposal' if project.source_type == 'proposal' else 'badge-press' }}">
+          {{ "コンペ" if project.source_type == 'proposal' else "プレス" }}
+        </span>
+        <span class="badge" style="background: {{ '#f39c12' if project.review_status == 'pending' else '#27ae60' if project.review_status == 'approved' else '#c0392b' }}; color: #fff;">
+          {{ project.review_status|default('pending', true)|upper }}
+        </span>
+        <a href="{{ url_for('project_detail', project_id=project.id) }}" target="_blank">{{ project.title }}</a>
+        <small class="text-muted" style="margin-left: 1rem;">({{ project.published_at }})</small>
+      </li>
+    {% else %}
+      <li>データがありません。</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

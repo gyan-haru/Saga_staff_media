@@ -1,0 +1,69 @@
+{% extends "admin/base.html" %}
+{% block title %}人物同定レビュー - 管理画面{% endblock %}
+{% block content %}
+<h3>人物同定レビュー</h3>
+<p>抽出済みの担当者 mention を、既存人物に結びつけるか、新規人物として採用するか、別人扱いにするかを確認します。</p>
+
+{% if reviews %}
+<div style="display: grid; gap: 1rem; margin-top: 1.5rem;">
+  {% for review in reviews %}
+  <section style="background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 1rem;">
+    <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; flex-wrap: wrap;">
+      <div>
+        <div style="font-size: 0.9em; color: #666;">mention #{{ review.id }} / project #{{ review.project_id }}</div>
+        <h4 style="margin: 0.4rem 0 0.5rem;"><a href="{{ url_for('project_detail', project_id=review.project_id) }}" target="_blank">{{ review.title }}</a></h4>
+        <div><strong>抽出名:</strong> {{ review.raw_person_name }}</div>
+        <div><strong>部署:</strong> {{ review.raw_department_name or '不明' }}</div>
+        <div><strong>連絡先:</strong> {{ review.contact_email or 'なし' }}{% if review.contact_phone %} / {{ review.contact_phone }}{% endif %}</div>
+        <div><strong>品質:</strong> {{ review.name_quality }} / confidence {{ '%.2f'|format(review.source_confidence or 0) }}</div>
+        {% if review.linked_person_name %}
+        <div><strong>現在リンク:</strong> {{ review.linked_person_name }} ({{ review.link_status }})</div>
+        {% elif review.link_status %}
+        <div><strong>現在ステータス:</strong> {{ review.link_status }}</div>
+        {% endif %}
+      </div>
+      <div style="min-width: 280px; flex: 1;">
+        {% if review.extracted_section %}
+        <div style="font-size: 0.85em; color: #666; margin-bottom: 0.4rem;">抽出スニペット</div>
+        <pre style="margin: 0;">{{ review.extracted_section }}</pre>
+        {% endif %}
+      </div>
+    </div>
+
+    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #eee;">
+      <form method="POST" style="display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap;">
+        <input type="hidden" name="mention_id" value="{{ review.id }}">
+        <label style="flex: 1; min-width: 280px;">
+          <strong>候補人物</strong>
+          <select name="person_id" style="width: 100%; padding: 0.5rem; margin-top: 0.35rem;">
+            <option value="">候補を選択してください</option>
+            {% for candidate in review.candidates %}
+            <option value="{{ candidate.id }}">
+              {{ candidate.display_name }} / {{ candidate.project_count }}件 / score {{ '%.2f'|format(candidate.candidate_score) }}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit" name="action" value="link" style="padding: 0.6rem 1rem; background: #2c7a7b; color: #fff; border: none; cursor: pointer;">既存人物に結びつける</button>
+        <button type="submit" name="action" value="create" style="padding: 0.6rem 1rem; background: #3566c8; color: #fff; border: none; cursor: pointer;">新規人物として採用</button>
+        <button type="submit" name="action" value="distinct" style="padding: 0.6rem 1rem; background: #6b7280; color: #fff; border: none; cursor: pointer;">別人として保留</button>
+      </form>
+
+      {% if review.candidates %}
+      <div style="margin-top: 0.75rem; font-size: 0.9em; color: #666;">
+        候補:
+        {% for candidate in review.candidates %}
+        <span style="display: inline-block; margin-right: 0.75rem;">{{ candidate.display_name }} ({{ candidate.project_count }}件)</span>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div style="margin-top: 0.75rem; font-size: 0.9em; color: #666;">一致候補はまだありません。</div>
+      {% endif %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% else %}
+<p style="margin-top: 2rem;">レビュー待ちの人物同定はありません。</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,55 @@
+{% extends "admin/base.html" %}
+{% block title %}人物管理・名寄せ - 管理画面{% endblock %}
+{% block content %}
+<h3>人物（担当者）管理・名寄せ</h3>
+<p>システムに登録されている担当者一覧です。表記揺れがある場合、メインとなるレコードに統合（マージ）できます。統合される側（サブ）のレコードは削除され、関連する企画はすべてメイン側に紐付け直されます。</p>
+
+<form method="POST" style="margin: 2rem 0; padding: 1.5rem; background: #fffcf5; border: 1px solid #f39c12; border-radius: 5px;">
+  <h4>名寄せアクション</h4>
+  <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+    <label style="flex: 1;">
+      <strong>残す担当者 (メイン):</strong>
+      <select name="primary_id" style="width: 100%; padding: 0.5rem;" required>
+        <option value="">選択してください</option>
+        {% for p in people %}
+        <option value="{{ p.id }}">{{ p.display_name }} (ID: {{ p.id }}, 案件数: {{ p.project_count }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label style="flex: 1;">
+      <strong>統合して消す担当者 (サブ):</strong>
+      <select name="secondary_id" style="width: 100%; padding: 0.5rem;" required>
+        <option value="">選択してください</option>
+        {% for p in people %}
+        <option value="{{ p.id }}">{{ p.display_name }} (ID: {{ p.id }}, 案件数: {{ p.project_count }})</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <button type="submit" name="action" value="merge" style="margin-top: 1.5rem; padding: 0.5rem 2rem; background: #e67e22; color: white; border: none; font-weight: bold; cursor: pointer;">統合を実行する</button>
+  <p style="margin-top: 0.5rem; color: #c0392b; font-size: 0.9em;">※この操作は元に戻せません。</p>
+</form>
+
+<table style="width: 100%; border-collapse: collapse;">
+  <thead>
+    <tr style="border-bottom: 2px solid #ccc; text-align: left;">
+      <th>ID</th>
+      <th>表示名</th>
+      <th>正規化名</th>
+      <th>所属部署の履歴</th>
+      <th>関連企画数</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in people %}
+    <tr style="border-bottom: 1px solid #eee;">
+      <td style="padding: 0.5rem;">{{ p.id }}</td>
+      <td><a href="{{ url_for('person_detail', person_key=p.person_key) }}" target="_blank">{{ p.display_name }}</a></td>
+      <td>{{ p.normalized_name }}</td>
+      <td>{{ p.departments }}</td>
+      <td>{{ p.project_count }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

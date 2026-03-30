@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}管理画面 - Saga Staff Media{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    .admin-header { background: #333; color: #fff; padding: 1rem 0; }
+    .admin-header a { color: #fff; text-decoration: none; margin-right: 1rem; }
+    .admin-nav { display: flex; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid #ddd; margin-bottom: 2rem; }
+  </style>
+</head>
+<body>
+  <header class="admin-header">
+    <div class="container" style="display: flex; justify-content: space-between; align-items: center;">
+      <h2 style="margin: 0;"><a href="{{ url_for('admin_index') }}">管理画面</a></h2>
+      <a href="{{ url_for('index') }}" style="font-size: 0.9em; opacity: 0.8; margin: 0;">← 公開サイトへ戻る</a>
+    </div>
+  </header>
+  <main class="container">
+    <nav class="admin-nav">
+      <a href="{{ url_for('admin_index') }}">ダッシュボード</a>
+      <a href="{{ url_for('admin_projects') }}">未レビュー企画</a>
+      <a href="{{ url_for('admin_identities') }}">人物同定レビュー</a>
+      <a href="{{ url_for('admin_people') }}">人物名寄せ</a>
+      <a href="{{ url_for('admin_departments') }}">部署名寄せ</a>
+    </nav>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

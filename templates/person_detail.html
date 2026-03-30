@@ -1,0 +1,51 @@
+{% extends 'layout.html' %}
+{% block title %}{{ person['display_name'] }}{% endblock %}
+{% block content %}
+<section class="detail-card">
+  <h2>{{ person['display_name'] }}</h2>
+  <div class="small">person key: {{ person['person_key'] }} / normalized: {{ person['normalized_name'] }}</div>
+  {% if departments %}
+  <p>関与部署: {{ departments|join(' / ') }}</p>
+  {% endif %}
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="small">関与企画数</div>
+      <div class="stat-value">{{ projects|length }}件</div>
+    </div>
+    <div class="stat-card">
+      <div class="small">関与部署数</div>
+      <div class="stat-value">{{ department_history|length }}部署</div>
+    </div>
+  </div>
+</section>
+
+{% if department_history %}
+<section class="detail-card">
+  <h3>部署履歴</h3>
+  <div class="list-panel history-list">
+    {% for item in department_history %}
+    <div class="row">
+      <div>
+        <div>{{ item['department_name'] }}</div>
+        <div class="small">{{ item['project_count'] }}件 / {{ item['first_seen_at'] or '日付不明' }} - {{ item['last_seen_at'] or '日付不明' }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="detail-card">
+  <h3>関与企画一覧</h3>
+  <div class="cards">
+    {% for project in projects %}
+    <article class="card">
+      <div class="meta">{{ project['source_type'] }}{% if project['published_at'] %} / {{ project['published_at'] }}{% endif %}</div>
+      <h4><a href="{{ url_for('project_detail', project_id=project['id']) }}">{{ project['title'] }}</a></h4>
+      <p>{{ project['summary'] or '概要未抽出' }}</p>
+      <div class="small">{{ project['raw_department_name'] or '部署不明' }}</div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

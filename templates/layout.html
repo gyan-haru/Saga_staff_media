@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Saga Staff Media{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <h1><a href="{{ url_for('index') }}">佐賀県 企画×担当者アーカイブ</a></h1>
+      <nav>
+        <a href="{{ url_for('projects') }}">企画一覧</a>
+        <a href="{{ url_for('people') }}">担当者一覧</a>
+      </nav>
+    </div>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

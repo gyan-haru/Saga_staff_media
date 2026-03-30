@@ -1,0 +1,31 @@
+{% extends "admin/base.html" %}
+{% block title %}未レビュー企画 - 管理画面{% endblock %}
+{% block content %}
+<h3>未レビュー企画一覧</h3>
+<p>レビュー待ちの企画は {{ projects|length }} 件あります。</p>
+
+<table style="width: 100%; border-collapse: collapse; margin-top: 2rem;">
+  <thead>
+    <tr style="border-bottom: 2px solid #ccc; text-align: left;">
+      <th>ID</th>
+      <th>種類</th>
+      <th>タイトル</th>
+      <th>抽出された担当者</th>
+      <th>アクション</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in projects %}
+    <tr style="border-bottom: 1px solid #eee;">
+      <td style="padding: 1rem 0.5rem;">{{ p.id }}</td>
+      <td>{{ p.source_type }}</td>
+      <td><a href="{{ url_for('project_detail', project_id=p.id) }}" target="_blank">{{ p.title }}</a></td>
+      <td>{{ p.raw_person_name or 'なし' }} <br><small class="text-muted">({{ p.raw_department_name or 'なし' }})</small></td>
+      <td><a href="{{ url_for('admin_project_detail', project_id=p.id) }}" class="btn" style="padding: 0.5rem 1rem; background: #3498db; color: white; text-decoration: none; border-radius: 3px; display: inline-block;">レビューする</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" style="padding: 2rem; text-align: center;">未レビューの企画はありません。</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

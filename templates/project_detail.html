@@ -1,0 +1,87 @@
+{% extends 'layout.html' %}
+{% block title %}{{ project['title'] }}{% endblock %}
+{% block content %}
+<article class="detail-card">
+  {% set resolved = project['resolved_appearance'] %}
+  <div class="meta">{{ project['source_type'] }}{% if project['published_at'] %} / {{ project['published_at'] }}{% endif %}</div>
+  <h2>{{ project['title'] }}</h2>
+  <p class="lead">{{ project['summary'] or '概要未抽出' }}</p>
+
+  <div class="detail-grid">
+    <div>
+      <h3>基本情報</h3>
+      <dl>
+        <dt>URL</dt><dd><a href="{{ project['url'] }}" target="_blank" rel="noopener">元ページを開く</a></dd>
+        <dt>予算</dt><dd>{{ project['budget'] or '未抽出' }}</dd>
+        <dt>参加申込締切</dt><dd>{{ project['application_deadline'] or '未抽出' }}</dd>
+        <dt>提出締切</dt><dd>{{ project['submission_deadline'] or '未抽出' }}</dd>
+      </dl>
+    </div>
+    <div>
+      <h3>担当情報</h3>
+      <dl>
+        <dt>部署</dt>
+        <dd>
+          {% if resolved %}
+          {{ resolved['display_department_name'] or '未抽出' }}
+          {% if resolved['department_status_label'] %}<span>({{ resolved['department_status_label'] }})</span>{% endif %}
+          {% else %}
+          未抽出
+          {% endif %}
+        </dd>
+        <dt>担当者</dt>
+        <dd>
+          {% if resolved and resolved['display_person_key'] %}
+          <a href="{{ url_for('person_detail', person_key=resolved['display_person_key']) }}">{{ resolved['display_person_name'] }}</a>
+          {% if resolved['person_status_label'] %}<span>({{ resolved['person_status_label'] }})</span>{% endif %}
+          {% elif resolved %}
+          {{ resolved['display_person_name'] or '未抽出' }}
+          {% if resolved['person_status_label'] %}<span>({{ resolved['person_status_label'] }})</span>{% endif %}
+          {% else %}
+          未抽出
+          {% endif %}
+        </dd>
+        <dt>連絡先</dt><dd>{{ resolved['contact_email'] if resolved else '' }} {{ resolved['contact_phone'] if resolved else '' }}</dd>
+      </dl>
+      {% if resolved and resolved['source_project_id'] %}
+      <p class="small">補完元: <a href="{{ url_for('project_detail', project_id=resolved['source_project_id']) }}">{{ resolved['source_project_title'] }}</a></p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if project['purpose'] %}
+  <section>
+    <h3>事業の趣旨</h3>
+    <p>{{ project['purpose'] }}</p>
+  </section>
+  {% endif %}
+
+  {% if project['appearance'] and project['appearance']['extracted_section'] %}
+  <section>
+    <h3>担当抽出に使った断片</h3>
+    <pre>{{ project['appearance']['extracted_section'] }}</pre>
+  </section>
+  {% endif %}
+
+  {% if project['related_projects'] %}
+  <section>
+    <h3>同じ担当者の他企画</h3>
+    <ul>
+      {% for item in project['related_projects'] %}
+      <li><a href="{{ url_for('project_detail', project_id=item['id']) }}">{{ item['title'] }}</a>{% if item['published_at'] %} ({{ item['published_at'] }}){% endif %}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if project['pdf_urls'] or project['zip_urls'] %}
+  <section>
+    <h3>添付資料</h3>
+    <ul>
+      {% for url in project['pdf_urls'] %}<li><a href="{{ url }}" target="_blank" rel="noopener">PDF</a></li>{% endfor %}
+      {% for url in project['zip_urls'] %}<li><a href="{{ url }}" target="_blank" rel="noopener">ZIP</a></li>{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+</article>
+{% endblock %}

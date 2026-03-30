@@ -1,0 +1,48 @@
+{% extends 'layout.html' %}
+{% block title %}ホーム | 佐賀県 企画×担当者アーカイブ{% endblock %}
+{% block content %}
+<section class="hero">
+  <h2>企画から人を見るための下地</h2>
+  <p>コンペやプレスリリースを蓄積し、担当者ページから関与企画の一覧をたどれる状態まで進めた版です。</p>
+</section>
+<section>
+  <div class="section-head">
+    <h3>最近の企画</h3>
+    <a href="{{ url_for('projects', source_type=source_type) }}">すべて見る</a>
+  </div>
+  <div class="cards">
+    {% for project in projects[:12] %}
+    <article class="card">
+      <div class="meta">{{ project['source_type'] }}{% if project['published_at'] %} / {{ project['published_at'] }}{% endif %}</div>
+      <h4><a href="{{ url_for('project_detail', project_id=project['id']) }}">{{ project['title'] }}</a></h4>
+      <p>{{ project['summary'] or '概要未抽出' }}</p>
+      <div class="small">
+        {{ project['display_department_name'] or '部署不明' }}
+        {% if project['department_status_label'] %}
+        <span>({{ project['department_status_label'] }})</span>
+        {% endif %}
+      </div>
+      {% if project['display_person_key'] %}
+      <div class="small"><a href="{{ url_for('person_detail', person_key=project['display_person_key']) }}">{{ project['display_person_name'] }}</a>{% if project['person_status_label'] %} <span>({{ project['person_status_label'] }})</span>{% endif %}</div>
+      {% elif project['display_person_name'] %}
+      <div class="small">{{ project['display_person_name'] }}{% if project['person_status_label'] %} <span>({{ project['person_status_label'] }})</span>{% endif %}</div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+<section>
+  <div class="section-head">
+    <h3>企画に多く登場する担当者</h3>
+    <a href="{{ url_for('people') }}">一覧へ</a>
+  </div>
+  <div class="list-panel">
+    {% for person in people %}
+    <div class="row">
+      <div><a href="{{ url_for('person_detail', person_key=person['person_key']) }}">{{ person['display_name'] }}</a></div>
+      <div>{{ person['project_count'] }}件</div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

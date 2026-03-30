@@ -1,0 +1,53 @@
+{% extends "admin/base.html" %}
+{% block title %}部署管理・名寄せ - 管理画面{% endblock %}
+{% block content %}
+<h3>部署管理・名寄せ</h3>
+<p>システムに登録されている部署一覧です。表記揺れを統合できます。</p>
+
+<form method="POST" style="margin: 2rem 0; padding: 1.5rem; background: #f4f6f6; border: 1px solid #7f8c8d; border-radius: 5px;">
+  <h4>名寄せアクション</h4>
+  <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+    <label style="flex: 1;">
+      <strong>残す部署 (メイン):</strong>
+      <select name="primary_id" style="width: 100%; padding: 0.5rem;" required>
+        <option value="">選択してください</option>
+        {% for d in departments %}
+        <option value="{{ d.id }}">{{ d.name }} (ID: {{ d.id }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label style="flex: 1;">
+      <strong>統合して消す部署 (サブ):</strong>
+      <select name="secondary_id" style="width: 100%; padding: 0.5rem;" required>
+        <option value="">選択してください</option>
+        {% for d in departments %}
+        <option value="{{ d.id }}">{{ d.name }} (ID: {{ d.id }})</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <button type="submit" name="action" value="merge" style="margin-top: 1.5rem; padding: 0.5rem 2rem; background: #34495e; color: white; border: none; font-weight: bold; cursor: pointer;">統合を実行する</button>
+  <p style="margin-top: 0.5rem; color: #c0392b; font-size: 0.9em;">※この操作は元に戻せません。</p>
+</form>
+
+<table style="width: 100%; border-collapse: collapse;">
+  <thead>
+    <tr style="border-bottom: 2px solid #ccc; text-align: left;">
+      <th>ID</th>
+      <th>部署名</th>
+      <th>正規化名</th>
+      <th>参加企画数</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for d in departments %}
+    <tr style="border-bottom: 1px solid #eee;">
+      <td style="padding: 0.5rem;">{{ d.id }}</td>
+      <td>{{ d.name }}</td>
+      <td>{{ d.normalized_name }}</td>
+      <td>{{ d.appearance_count }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

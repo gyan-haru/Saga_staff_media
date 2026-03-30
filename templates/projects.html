@@ -1,0 +1,31 @@
+{% extends 'layout.html' %}
+{% block title %}企画一覧{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h2>企画一覧</h2>
+  <div class="filters">
+    <a href="{{ url_for('projects') }}" class="chip {% if not source_type %}active{% endif %}">すべて</a>
+    <a href="{{ url_for('projects', source_type='proposal') }}" class="chip {% if source_type == 'proposal' %}active{% endif %}">コンペ</a>
+    <a href="{{ url_for('projects', source_type='press_release') }}" class="chip {% if source_type == 'press_release' %}active{% endif %}">プレスリリース</a>
+  </div>
+</div>
+<div class="cards">
+  {% for project in projects %}
+  <article class="card">
+    <div class="meta">{{ project['source_type'] }}{% if project['published_at'] %} / {{ project['published_at'] }}{% endif %}</div>
+    <h3><a href="{{ url_for('project_detail', project_id=project['id']) }}">{{ project['title'] }}</a></h3>
+    <p>{{ project['summary'] or '概要未抽出' }}</p>
+    <div class="small">部署: {{ project['display_department_name'] or '不明' }}{% if project['department_status_label'] %} ({{ project['department_status_label'] }}){% endif %}</div>
+    <div class="small">担当者:
+      {% if project['display_person_key'] %}
+      <a href="{{ url_for('person_detail', person_key=project['display_person_key']) }}">{{ project['display_person_name'] }}</a>
+      {% if project['person_status_label'] %} ({{ project['person_status_label'] }}){% endif %}
+      {% else %}
+      {{ project['display_person_name'] or '不明' }}
+      {% if project['person_status_label'] %} ({{ project['person_status_label'] }}){% endif %}
+      {% endif %}
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% endblock %}

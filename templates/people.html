@@ -1,0 +1,16 @@
+{% extends 'layout.html' %}
+{% block title %}担当者一覧{% endblock %}
+{% block content %}
+<h2>担当者一覧</h2>
+<div class="list-panel">
+  {% for person in people %}
+  <div class="row person-row">
+    <div>
+      <a href="{{ url_for('person_detail', person_key=person['person_key']) }}">{{ person['display_name'] }}</a>
+      {% if person['departments'] %}<div class="small">{{ person['departments'] }}</div>{% endif %}
+    </div>
+    <div>{{ person['project_count'] }}件</div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
