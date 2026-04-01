@@ -69,22 +69,59 @@ def should_skip_expired(record: ProjectRecord) -> bool:
     return deadline < dt.date.today()
 
 
-def run_ingest(force: bool = False, notify: bool = False, max_pages: int = 1) -> int:
+def filter_sources(
+    source_type: str | None = None,
+    source_url: str | None = None,
+) -> list[dict[str, object]]:
+    rows = LIST_SOURCES
+    if source_type:
+        rows = [source for source in rows if source["source_type"] == source_type]
+    if source_url:
+        rows = [source for source in rows if str(source["url"]) == source_url]
+    return rows
+
+
+def choose_better_link(current, candidate):
+    current_department = getattr(current, "source_department_name", "") or ""
+    candidate_department = getattr(candidate, "source_department_name", "") or ""
+    if len(candidate_department) > len(current_department):
+        return candidate
+    return current
+
+
+def run_ingest(
+    force: bool = False,
+    notify: bool = False,
+    max_pages: int = 1,
+    source_type: str | None = None,
+    source_url: str | None = None,
+) -> int:
     init_db()
+
+    sources = filter_sources(source_type=source_type, source_url=source_url)
+    if not sources:
+        print("No matching sources found")
+        return 0
 
     processed_urls = set() if force else load_processed_urls(CRAWLED_URL_LOG_PATH)
     all_links = []
-    for source in LIST_SOURCES:
+    for source in sources:
         all_links.extend(
             collect_links_from_list_page(
                 source["url"],
                 source["source_type"],
                 max_pages=max_pages,
                 link_keywords=source.get("link_keywords"),
+                link_match_mode=source.get("link_match_mode"),
+                source_department_name=str(source.get("department_name", "")),
             )
         )
 
-    unique_links = list({item.url: item for item in all_links}.values())
+    unique_links_by_url = {}
+    for link in all_links:
+        existing = unique_links_by_url.get(link.url)
+        unique_links_by_url[link.url] = choose_better_link(existing, link) if existing else link
+    unique_links = list(unique_links_by_url.values())
     print(f"Collected {len(unique_links)} unique links")
 
     new_count = 0
@@ -118,5 +155,15 @@ if __name__ == "__main__":
     parser.add_argument("--force", action="store_true", help="URLログを無視して再取得する")
     parser.add_argument("--notify", action="store_true", help="保存後にDiscordへ通知する")
     parser.add_argument("--max-pages", type=int, default=1, help="遡るページ数の上限（デフォルト1）")
+    parser.add_argument("--source-type", choices=["proposal", "press_release"], help="対象source_typeだけ取り込む")
+    parser.add_argument("--source-url", help="特定の一覧URLだけ取り込む")
     args = parser.parse_args()
-    raise SystemExit(run_ingest(force=args.force, notify=args.notify, max_pages=args.max_pages))
+    raise SystemExit(
+        run_ingest(
+            force=args.force,
+            notify=args.notify,
+            max_pages=args.max_pages,
+            source_type=args.source_type,
+            source_url=args.source_url,
+        )
+    )

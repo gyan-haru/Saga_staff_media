@@ -7,6 +7,15 @@
   {% if departments %}
   <p>関与部署: {{ departments|join(' / ') }}</p>
   {% endif %}
+  {% if movement_summary.current_department %}
+  <p>
+    現在の部署候補: {{ movement_summary.current_department['name'] }}
+    {% if movement_summary.current_department['as_of'] %}<span class="small">({{ movement_summary.current_department['as_of'] }}時点)</span>{% endif %}
+  </p>
+  {% endif %}
+  {% if movement_summary.previous_departments %}
+  <p>これまでの部署: {% for item in movement_summary.previous_departments %}{{ item['name'] }}{% if not loop.last %} / {% endif %}{% endfor %}</p>
+  {% endif %}
   <div class="stats-grid">
     <div class="stat-card">
       <div class="small">関与企画数</div>
@@ -16,8 +25,35 @@
       <div class="small">関与部署数</div>
       <div class="stat-value">{{ department_history|length }}部署</div>
     </div>
+    <div class="stat-card">
+      <div class="small">異動履歴</div>
+      <div class="stat-value">{{ transfer_history|length }}件</div>
+    </div>
+    <div class="stat-card">
+      <div class="small">近い職員</div>
+      <div class="stat-value">{{ related_people|length }}人</div>
+    </div>
   </div>
 </section>
+
+{% if movement_summary.latest_transfer %}
+<section class="detail-card">
+  <h3>直近の異動</h3>
+  <div class="list-panel history-list">
+    <div class="row">
+      <div>
+        <div>{{ movement_summary.latest_transfer['effective_date'] or movement_summary.latest_transfer['source_published_at'] or '日付不明' }} / {{ movement_summary.latest_transfer['from_department_raw'] or '異動前不明' }} → {{ movement_summary.latest_transfer['to_department_raw'] or '異動先不明' }}</div>
+        <div class="small">
+          {% if movement_summary.latest_transfer['from_title_raw'] or movement_summary.latest_transfer['to_title_raw'] %}
+          {{ movement_summary.latest_transfer['from_title_raw'] or '旧職名不明' }} → {{ movement_summary.latest_transfer['to_title_raw'] or '新職名不明' }} /
+          {% endif %}
+          {{ movement_summary.latest_transfer['source_type'] }} / confidence {{ '%.2f'|format(movement_summary.latest_transfer['confidence'] or 0) }}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
 
 {% if department_history %}
 <section class="detail-card">
@@ -30,6 +66,54 @@
         <div class="small">{{ item['project_count'] }}件 / {{ item['first_seen_at'] or '日付不明' }} - {{ item['last_seen_at'] or '日付不明' }}</div>
       </div>
     </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if transfer_history %}
+<section class="detail-card">
+  <h3>人事異動履歴</h3>
+  <div class="list-panel history-list">
+    {% for item in transfer_history %}
+    <div class="row">
+      <div>
+        <div>{{ item['effective_date'] or item['source_published_at'] or '日付不明' }} / {{ item['from_department_raw'] or '異動前不明' }} → {{ item['to_department_raw'] or '異動先不明' }}</div>
+        <div class="small">
+          {% if item['from_title_raw'] or item['to_title_raw'] %}
+          {{ item['from_title_raw'] or '旧職名不明' }} → {{ item['to_title_raw'] or '新職名不明' }} /
+          {% endif %}
+          {{ item['source_type'] }} / confidence {{ '%.2f'|format(item['confidence'] or 0) }}
+          {% if item['source_url'] %}
+          / <a href="{{ item['source_url'] }}" target="_blank">{{ item['source_title'] }}</a>
+          {% else %}
+          / {{ item['source_title'] }}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if related_people %}
+<section class="detail-card">
+  <h3>つながり</h3>
+  <div class="cards">
+    {% for item in related_people %}
+    <article class="card">
+      <div class="meta">shared {{ item['shared_project_count'] }} projects / {{ item['shared_department_count'] }} departments</div>
+      <h4><a href="{{ url_for('person_detail', person_key=item['person_key']) }}">{{ item['display_name'] }}</a></h4>
+      {% if item['latest_shared_project_title'] %}
+      <p>直近で近い企画: {{ item['latest_shared_project_title'] }}</p>
+      {% else %}
+      <p>共通部署: {{ item['shared_departments']|join(' / ') }}</p>
+      {% endif %}
+      {% if item['shared_departments'] %}
+      <div class="small">{{ item['shared_departments']|join(' / ') }}</div>
+      {% endif %}
+    </article>
     {% endfor %}
   </div>
 </section>

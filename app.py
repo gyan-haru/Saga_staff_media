@@ -7,17 +7,22 @@ from flask import Flask, abort, render_template, request, Response, redirect, ur
 from database import (
     create_person_for_mention,
     fetch_departments,
+    fetch_department_profiles,
+    fetch_network_snapshot,
     fetch_pending_identity_reviews,
     fetch_pending_reviews,
     fetch_people,
     fetch_person_detail,
     fetch_project_detail,
     fetch_projects,
+    fetch_staff_roster,
     init_db,
+    link_person_mention_to_timeline_recommendation,
     link_person_mention_to_person,
     mark_person_mention_distinct,
     merge_departments,
     merge_people,
+    group_department_profiles_by_top_unit,
     update_project_review,
 )
 
@@ -71,6 +76,26 @@ def project_detail(project_id: int):
 def people():
     rows = fetch_people(limit=500)
     return render_template("people.html", people=rows)
+
+
+@app.route("/directory")
+def staff_directory():
+    payload = fetch_staff_roster()
+    return render_template("roster.html", **payload)
+
+
+@app.route("/departments")
+def departments():
+    rows = fetch_department_profiles()
+    groups = group_department_profiles_by_top_unit(rows)
+    return render_template("departments.html", departments=rows, department_groups=groups)
+
+
+@app.route("/network")
+def network():
+    selected_top_unit = (request.args.get("top_unit") or "").strip() or None
+    payload = fetch_network_snapshot(top_unit_filter=selected_top_unit)
+    return render_template("network.html", **payload)
 
 
 @app.route("/people/<person_key>")
@@ -148,6 +173,10 @@ def admin_identities():
                 person_id = request.form.get("person_id", type=int)
                 if person_id:
                     link_person_mention_to_person(mention_id, person_id)
+            elif action == "timeline_link":
+                employee_slot_id = request.form.get("employee_slot_id", type=int)
+                if employee_slot_id:
+                    link_person_mention_to_timeline_recommendation(mention_id, employee_slot_id)
             elif action == "create":
                 create_person_for_mention(mention_id)
             elif action == "distinct":

@@ -49,6 +49,16 @@
         <button type="submit" name="action" value="distinct" style="padding: 0.6rem 1rem; background: #6b7280; color: #fff; border: none; cursor: pointer;">別人として保留</button>
       </form>
 
+      {% if review.timeline_recommendation and review.timeline_recommendation.employee_slot_id %}
+      <form method="POST" style="margin-top: 0.75rem;">
+        <input type="hidden" name="mention_id" value="{{ review.id }}">
+        <input type="hidden" name="employee_slot_id" value="{{ review.timeline_recommendation.employee_slot_id }}">
+        <button type="submit" name="action" value="timeline_link" style="padding: 0.6rem 1rem; background: #b7791f; color: #fff; border: none; cursor: pointer;">
+          時系列推奨を採用
+        </button>
+      </form>
+      {% endif %}
+
       {% if review.candidates %}
       <div style="margin-top: 0.75rem; font-size: 0.9em; color: #666;">
         候補:
@@ -56,8 +66,53 @@
         <span style="display: inline-block; margin-right: 0.75rem;">{{ candidate.display_name }} ({{ candidate.project_count }}件)</span>
         {% endfor %}
       </div>
-      {% else %}
+        {% else %}
       <div style="margin-top: 0.75rem; font-size: 0.9em; color: #666;">一致候補はまだありません。</div>
+      {% endif %}
+
+      {% if review.slot_candidates %}
+      <div style="margin-top: 1rem; padding: 0.9rem; background: #fffaf0; border: 1px solid #ead7a4; border-radius: 6px;">
+        <div style="font-weight: 600; margin-bottom: 0.4rem;">勤務スロット候補</div>
+        <div style="font-size: 0.9em; color: #666; margin-bottom: 0.6rem;">
+          同姓の切り分け用です。人物確定ではなく、「この時期この部署にいた候補」を見ます。
+        </div>
+        {% if review.timeline_recommendation and review.timeline_recommendation.employee_slot_id %}
+        <div style="font-size: 0.9em; color: #8a6d3b; margin-bottom: 0.6rem;">
+          時系列推奨: {{ review.timeline_recommendation.display_name or '候補あり' }}
+          / total {{ '%.2f'|format(review.timeline_recommendation.timeline_total_score or 0) }}
+        </div>
+        {% endif %}
+        <ul style="margin: 0; padding-left: 1.25rem;">
+          {% for slot in review.slot_candidates %}
+          <li style="margin-bottom: 0.6rem;">
+            <strong>{{ slot.display_name }}</strong>
+            / score {{ '%.2f'|format(slot.candidate_score) }}
+            {% if slot.timeline_recommended %}
+            <span style="display: inline-block; margin-left: 0.4rem; padding: 0.1rem 0.4rem; background: #b7791f; color: #fff; border-radius: 999px; font-size: 0.8em;">時系列推奨</span>
+            {% endif %}
+            / {{ slot.raw_department_name or '部署不明' }}
+            {% if slot.title_raw %} / {{ slot.title_raw }}{% endif %}
+            <div style="font-size: 0.9em; color: #666;">
+              {{ slot.active_from or '開始日不明' }}{% if slot.active_to %} 〜 {{ slot.active_to }}{% else %} 〜 継続中候補{% endif %}
+              {% if slot.linked_person_name %}
+              / 既存人物:
+              {% if slot.person_key %}
+              <a href="{{ url_for('person_detail', person_key=slot.person_key) }}" target="_blank">{{ slot.linked_person_name }}</a>
+              {% else %}
+              {{ slot.linked_person_name }}
+              {% endif %}
+              {% endif %}
+              {% if slot.source_title %}
+              / {% if slot.source_url %}<a href="{{ slot.source_url }}" target="_blank">{{ slot.source_title }}</a>{% else %}{{ slot.source_title }}{% endif %}
+              {% endif %}
+            </div>
+            {% if slot.notes %}
+            <div style="font-size: 0.85em; color: #8a6d3b;">{{ slot.notes }}</div>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
       {% endif %}
     </div>
   </section>

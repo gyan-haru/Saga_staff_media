@@ -1,0 +1,104 @@
+{% extends 'layout.html' %}
+{% block title %}部署一覧{% endblock %}
+{% block content %}
+<section class="detail-card">
+  <h2>部署プロフィール</h2>
+  <p class="small">
+    組織階層、公開されている企画、見えている担当者、人事異動の勤務スロットから組み立てた部署プロフィールです。
+    同姓の担当者を見分けるときに、部署の方向性を見るための補助情報として使えます。
+  </p>
+</section>
+
+{% if department_groups %}
+<section class="detail-card">
+  <div class="section-head">
+    <h3>部局ごとの部署プロファイル</h3>
+    <div class="small">{{ departments|length }}部署</div>
+  </div>
+  <div class="department-tree">
+    {% for group in department_groups %}
+    <section class="dept-group">
+      <div class="dept-group-head">
+        <div>
+          <div class="meta">配下 {{ group['department_count'] }}部署 / 企画 {{ group['project_count'] }}件</div>
+          <h3>
+            {% if group['top_url'] %}
+            <a href="{{ group['top_url'] }}" target="_blank">{{ group['top_unit'] }}</a>
+            {% else %}
+            {{ group['top_unit'] }}
+            {% endif %}
+          </h3>
+          {% if group['representative_themes'] %}
+          <div class="small dept-group-summary">代表テーマ: {{ group['representative_themes'][:6]|join(' / ') }}</div>
+          {% endif %}
+          {% if group['sample_people'] %}
+          <div class="small" style="margin-top: 0.35rem;">見えている人: {{ group['sample_people'][:6]|join(' / ') }}</div>
+          {% endif %}
+        </div>
+        <div class="dept-group-actions">
+          <a class="chip active" href="{{ url_for('network', top_unit=group['top_unit']) }}">この部局のネットワーク</a>
+        </div>
+      </div>
+
+      <div class="dept-group-body">
+        {% for department in group['departments'] %}
+        <article class="dept-leaf">
+          <div class="dept-leaf-title">
+            <div>
+              <div class="meta">
+                {% if department['project_count'] %}企画 {{ department['project_count'] }}件{% endif %}
+                {% if department['appearance_count'] or department['mention_count'] %}
+                / 観測 {{ department['appearance_count'] + department['mention_count'] }}件
+                {% endif %}
+              </div>
+              <h4>
+                {% if department['child_url'] %}
+                <a href="{{ department['child_url'] }}" target="_blank">{{ department['name'] }}</a>
+                {% else %}
+                {{ department['name'] }}
+                {% endif %}
+              </h4>
+            </div>
+          </div>
+          {% if department['profile_summary'] %}
+          <p>{{ department['profile_summary'] }}</p>
+          {% endif %}
+          {% if department['focus_keywords'] %}
+          <div class="small">主なテーマ: {{ department['focus_keywords']|join(' / ') }}</div>
+          {% endif %}
+          {% if department['visible_people'] %}
+          <div class="small" style="margin-top: 0.35rem;">見えている人: {{ department['visible_people'][:6]|join(' / ') }}</div>
+          {% endif %}
+          {% if department['tel'] or department['fax'] %}
+          <div class="small" style="margin-top: 0.35rem;">
+            {% if department['tel'] %}TEL {{ department['tel'] }}{% endif %}
+            {% if department['tel'] and department['fax'] %} / {% endif %}
+            {% if department['fax'] %}FAX {{ department['fax'] }}{% endif %}
+          </div>
+          {% endif %}
+          {% if department['linked_people'] %}
+          <div class="small" style="margin-top: 0.35rem;">
+            確定人物:
+            {% for person in department['linked_people'][:5] %}
+            {% if loop.index > 1 %} / {% endif %}
+            <a href="{{ url_for('person_detail', person_key=person['person_key']) }}">{{ person['display_name'] }}</a>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% if department['recent_projects'] %}
+          <div class="small" style="margin-top: 0.35rem;">
+            最近の企画:
+            {% for project in department['recent_projects'] %}
+            <div><a href="{{ url_for('project_detail', project_id=project['id']) }}">{{ project['title'] }}</a></div>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

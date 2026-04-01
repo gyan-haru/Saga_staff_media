@@ -15,6 +15,28 @@ PROPOSAL_KEYWORDS = [
     "入札",
 ]
 
+PROPOSAL_BROAD_KEYWORDS = [
+    *PROPOSAL_KEYWORDS,
+    "公募",
+    "募集",
+    "業務委託",
+    "一般競争",
+    "条件付",
+    "落札",
+    "開札",
+    "審査結果",
+    "選定結果",
+    "質問への回答",
+    "質問に対する回答",
+    "回答を公表",
+    "参加資格",
+    "参加表明",
+    "公告",
+    "賃貸借",
+    "物品調達",
+    "購入",
+]
+
 PRESS_RELEASE_KEYWORDS = [
     "お知らせ",
     "発表",
@@ -59,11 +81,15 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "saga_media.db"
 CRAWLED_URL_LOG_PATH = DATA_DIR / "crawled_urls.txt"
 LIST_SOURCES_CSV_PATH = Path(os.getenv("SAGA_MEDIA_SOURCES_CSV_PATH", DATA_DIR / "list_sources.csv"))
+DEPARTMENT_HIERARCHY_CSV_PATH = Path(
+    os.getenv("SAGA_MEDIA_DEPARTMENT_HIERARCHY_CSV_PATH", DATA_DIR / "department_hierarchy.csv")
+)
 
 DISCORD_WEBHOOK_URL = os.getenv("PROPOSAL_WEBHOOK_URL", os.getenv("DISCORD_WEBHOOK_URL", ""))
 
 VALID_SOURCE_TYPES = {"proposal", "press_release"}
 GENERIC_PRESS_RELEASE_LABELS = {"", "記者発表", "報道発表", "プレスリリース", "共通"}
+GENERIC_PROPOSAL_LABELS = {"", "共通", "入札", "入札・補助金・公募事業", "公募事業"}
 
 
 def _build_source_record(url: str, department_name: str, source_type: str) -> dict[str, object]:
@@ -72,6 +98,8 @@ def _build_source_record(url: str, department_name: str, source_type: str) -> di
         "department_name": department_name,
         "source_type": source_type,
     }
+    if source_type == "proposal":
+        source["link_match_mode"] = "strict" if department_name in GENERIC_PROPOSAL_LABELS else "broad"
     if source_type == "press_release" and department_name not in GENERIC_PRESS_RELEASE_LABELS:
         source["link_keywords"] = PRESS_RELEASE_DEPARTMENT_KEYWORDS
     return source

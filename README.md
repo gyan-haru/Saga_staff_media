@@ -458,33 +458,125 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 14. DB初期化と取込
+仮想環境を毎回 `activate` しなくても、以下のように `./.venv/bin/python` を直接使えば実行できる。
+
+## 14. 基本の実行フロー
+
+1. 一覧ページから記事を取り込む
+2. 保存済み `raw_text` から担当者・部署を再構築する
+3. Web画面で確認する
+
+初回取り込み:
 
 ```bash
-python ingest.py
+./.venv/bin/python ingest.py
 ```
+
+抽出ルールを更新したあとに、保存済みデータから `person_mentions` / `appearances` を作り直す:
+
+```bash
+./.venv/bin/python rebuild_person_mentions.py
+```
+
+Webを起動する:
+
+```bash
+./.venv/bin/python app.py
+```
+
+ブラウザでは少なくとも次を確認するとよい。
+
+- `http://127.0.0.1:8000/`
+- `http://127.0.0.1:8000/people`
+- `http://127.0.0.1:8000/directory`
+- `http://127.0.0.1:8000/admin/identities`
+
+## 15. 取り込みのバリエーション
 
 全件再取得する場合:
 
 ```bash
-python ingest.py --force
+./.venv/bin/python ingest.py --force
+```
+
+proposal だけ再取得する場合:
+
+```bash
+./.venv/bin/python ingest.py --force --source-type proposal
+```
+
+特定の一覧URLだけ再取得する場合:
+
+```bash
+./.venv/bin/python ingest.py --force --source-url https://www.pref.saga.lg.jp/list00156.html
 ```
 
 Discord通知も送る場合:
 
 ```bash
-DISCORD_WEBHOOK_URL=... python ingest.py --notify
+DISCORD_WEBHOOK_URL=... ./.venv/bin/python ingest.py --notify
 ```
 
-## 15. Web起動
+`ingest.py` で新規取得、`rebuild_person_mentions.py` で再抽出反映、という役割分担にしている。  
+抽出ルールだけを直した場合は、毎回ネット再取得せず `rebuild_person_mentions.py` を先に回すほうが速い。
+
+## 16. 診断と補助スクリプト
+
+一覧URLごとの `拾えた記事数 / DB保存数 / 担当者抽出数` を確認するには:
 
 ```bash
-python app.py
+./.venv/bin/python diagnose_source_coverage.py --max-pages 1
 ```
 
-ブラウザで `http://127.0.0.1:8000` を開く想定。
+担当者欠落の原因別診断を出すには:
 
-## 16. 当面の優先開発
+```bash
+./.venv/bin/python diagnose_missing_people.py
+```
+
+人事異動CSVを1本だけ取り込むには:
+
+```bash
+./.venv/bin/python import_transfers.py path/to/transfers.csv
+```
+
+年ごとのCSVをまとめて取り込むには:
+
+```bash
+./.venv/bin/python import_transfer_directory.py --dir data/transfers
+```
+
+取り込み前に年次CSVを検証するには:
+
+```bash
+./.venv/bin/python validate_transfer_csv.py --dir data/transfers
+```
+
+佐賀新聞の人事異動特集から年次CSVを自動生成するには:
+
+```bash
+./.venv/bin/python build_newspaper_transfer_csv.py 2025
+```
+
+## 17. 年次の人事異動更新フロー
+
+年1回の更新は、次の順に実行すると分かりやすい。
+
+1. 必要なら佐賀新聞や公式異動表から年次CSVを作る
+2. CSVを検証する
+3. `transfer_events` に取り込む
+4. Web画面で人物ページと `/directory` を確認する
+
+例:
+
+```bash
+./.venv/bin/python build_newspaper_transfer_csv.py 2025
+./.venv/bin/python validate_transfer_csv.py --dir data/transfers
+./.venv/bin/python import_transfer_directory.py --dir data/transfers
+./.venv/bin/python app.py
+```
+
+## 18. 当面の優先開発
 
 1. 人物統合の精度を上げる
 2. 人物ページにテーマタグを導入する
@@ -492,7 +584,7 @@ python app.py
 4. 編集部仮説を保存する仕組みを追加する
 5. 取材記事テーブルと画面を追加する
 
-## 17. 人物同定と異動履歴の設計
+## 19. 人物同定と異動履歴の設計
 
 人物同定、複数担当者、異動履歴の設計方針は
 [docs/person_identity_and_transfer_design.md](/Users/harrn/Desktop/saga_staff_media/docs/person_identity_and_transfer_design.md)
@@ -500,4 +592,8 @@ python app.py
 
 人事異動DBの具体スキーマ、取り込み順、`person_identity_links` とつなぐ信頼度ルールは
 [docs/transfer_history_ingestion_spec.md](/Users/harrn/Desktop/saga_staff_media/docs/transfer_history_ingestion_spec.md)
+にまとめた。
+
+年1回更新の運用メモは
+[docs/annual_transfer_update_workflow.md](/Users/harrn/Desktop/saga_staff_media/docs/annual_transfer_update_workflow.md)
 にまとめた。

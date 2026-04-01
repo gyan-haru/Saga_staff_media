@@ -59,6 +59,31 @@
         <button type="submit" name="action" value="approve" style="padding: 0.5rem 1rem; background: #2ecc71; color: white; border: none; font-weight: bold; cursor: pointer; flex: 1;">承認 (公開)</button>
       </div>
     </form>
+
+    {% if project.transfer_candidates %}
+    <div style="margin-top: 1rem; padding: 1rem; background: #fffaf0; border: 1px solid #ead7a4; border-radius: 5px;">
+      <h4 style="margin-top: 0;">人事異動DBからの候補</h4>
+      <p style="margin-top: 0; color: #666;">担当者名が欠けている案件向けの補助候補です。自動確定ではなく、確認前提で使います。</p>
+      <ul style="margin: 0; padding-left: 1.25rem;">
+        {% for candidate in project.transfer_candidates %}
+        <li style="margin-bottom: 0.5rem;">
+          <a href="{{ url_for('person_detail', person_key=candidate.person_key) }}" target="_blank">{{ candidate.display_name }}</a>
+          / score {{ '%.2f'|format(candidate.candidate_score) }}
+          / {{ '異動先一致' if candidate.match_type == 'to_department' else '異動元一致' }}
+          {% if candidate.days_delta is not none %}/ {{ candidate.days_delta }}日差{% endif %}
+          <div style="font-size: 0.9em; color: #666;">
+            {{ candidate.effective_date or '日付不明' }} / {{ candidate.from_department_raw or '異動前不明' }} → {{ candidate.to_department_raw or '異動先不明' }}
+            {% if candidate.source_url %}
+            / <a href="{{ candidate.source_url }}" target="_blank">{{ candidate.source_title }}</a>
+            {% else %}
+            / {{ candidate.source_title }}
+            {% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
   </div>
 
   <!-- Right: Raw Text / Source Info -->

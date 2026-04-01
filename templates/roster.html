@@ -1,0 +1,252 @@
+{% extends 'layout.html' %}
+{% block title %}擬似名簿{% endblock %}
+{% block content %}
+<section class="detail-card">
+  <h2>県庁内の擬似名簿</h2>
+  <p class="small">
+    公開された企画記事と人事異動情報だけを使って組み立てた候補台帳です。
+    姓だけの担当者は自動で人物確定せず、候補として別管理しています。
+    同じ年に別部署で出てくる同姓は、まず別人として扱い、人事異動ベースの勤務スロットで追います。
+  </p>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="small">確定人物</div>
+      <div class="stat-value">{{ stats['confirmed_count'] }}人</div>
+    </div>
+    <div class="stat-card">
+      <div class="small">部局グループ</div>
+      <div class="stat-value">{{ stats['department_group_count'] }}組</div>
+    </div>
+    <div class="stat-card">
+      <div class="small">異動ベース現名簿</div>
+      <div class="stat-value">{{ stats['slot_roster_count'] }}人</div>
+    </div>
+    <div class="stat-card">
+      <div class="small">人事異動ベース候補</div>
+      <div class="stat-value">{{ stats['transfer_candidate_count'] }}人</div>
+    </div>
+  </div>
+</section>
+
+{% if department_groups %}
+<section class="detail-card">
+  <div class="section-head">
+    <h3>部署レイヤー別</h3>
+    <div class="small">組織ページの部局構造に沿って集約</div>
+  </div>
+  <div class="cards">
+    {% for group in department_groups %}
+    <article class="card">
+      <div class="meta">
+        {{ group['total_count'] }}件
+        / 確定 {{ group['confirmed_people']|length }}
+        / 異動名簿 {{ group['slot_roster']|length }}
+        / 異動候補 {{ group['transfer_candidates']|length }}
+        / 記事候補 {{ group['mention_candidates']|length }}
+      </div>
+      <h4>
+        {% if group['top_url'] %}
+        <a href="{{ group['top_url'] }}" target="_blank">{{ group['top_unit'] }}</a>
+        {% else %}
+        {{ group['top_unit'] }}
+        {% endif %}
+      </h4>
+      {% if group['profile_summary'] %}
+      <div class="small" style="margin-top: 0.35rem;">{{ group['profile_summary'] }}</div>
+      {% endif %}
+      {% if group['focus_keywords'] %}
+      <div class="small" style="margin-top: 0.35rem;">
+        主なテーマ:
+        {{ group['focus_keywords']|join(' / ') }}
+      </div>
+      {% endif %}
+      {% if group['child_departments'] %}
+      <div class="small" style="margin-top: 0.35rem;">
+        主な部署:
+        {{ group['child_departments'][:6]|join(' / ') }}
+      </div>
+      {% endif %}
+      {% if group['sample_people'] %}
+      <div class="small" style="margin-top: 0.35rem;">
+        見えている人:
+        {{ group['sample_people'][:6]|join(' / ') }}
+      </div>
+      {% endif %}
+      {% if group['confirmed_people'] %}
+      <div class="small">
+        確定:
+        {% for person in group['confirmed_people'][:6] %}
+        {% if loop.index > 1 %} / {% endif %}
+        <a href="{{ url_for('person_detail', person_key=person['person_key']) }}">{{ person['display_name'] }}</a>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if group['slot_roster'] %}
+      <div class="small" style="margin-top: 0.35rem;">
+        異動名簿:
+        {% for item in group['slot_roster'][:6] %}
+        {% if loop.index > 1 %} / {% endif %}
+        {% if item['person_key'] %}
+        <a href="{{ url_for('person_detail', person_key=item['person_key']) }}">{{ item['display_name'] }}</a>
+        {% else %}
+        {{ item['display_name'] }}
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if group['transfer_candidates'] %}
+      <div class="small" style="margin-top: 0.35rem;">
+        異動候補:
+        {% for item in group['transfer_candidates'][:5] %}
+        {% if loop.index > 1 %} / {% endif %}
+        {{ item['display_name'] }}
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if group['mention_candidates'] %}
+      <div class="small" style="margin-top: 0.35rem;">
+        記事候補:
+        {% for item in group['mention_candidates'][:5] %}
+        {% if loop.index > 1 %} / {% endif %}
+        {{ item['display_name'] }}
+        {% endfor %}
+      </div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if slot_roster %}
+<section class="detail-card">
+  <div class="section-head">
+    <h3>異動ベース現名簿</h3>
+    <div class="small">{{ slot_roster_as_of }}時点で勤務スロットが開いている職員</div>
+  </div>
+  <div class="cards">
+    {% for item in slot_roster %}
+    <article class="card">
+      <div class="meta">{{ item['active_from'] or '開始日不明' }}から在籍 / confidence {{ '%.2f'|format(item['slot_confidence'] or 0) }}</div>
+      <h4>
+        {% if item['person_key'] %}
+        <a href="{{ url_for('person_detail', person_key=item['person_key']) }}">{{ item['display_name'] }}</a>
+        {% else %}
+        {{ item['display_name'] }}
+        {% endif %}
+      </h4>
+      <p>{{ item['current_department'] or '部署不明' }}</p>
+      {% if item['previous_department'] %}
+      <div class="small">前部署: {{ item['previous_department'] }}</div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if confirmed_people %}
+<section class="detail-card">
+  <div class="section-head">
+    <h3>確定人物</h3>
+    <div class="small">人物ページあり</div>
+  </div>
+  <div class="cards">
+    {% for person in confirmed_people %}
+    <article class="card">
+      <div class="meta">
+        {% if person['latest_transfer_date'] %}{{ person['latest_transfer_date'] }}時点{% else %}記事ベース{% endif %}
+      </div>
+      <h4><a href="{{ url_for('person_detail', person_key=person['person_key']) }}">{{ person['display_name'] }}</a></h4>
+      <p>{{ person['current_department'] or '現在部署候補なし' }}</p>
+      {% if person['previous_department'] %}
+      <div class="small">前部署: {{ person['previous_department'] }}</div>
+      {% endif %}
+      <div class="small">企画 {{ person['project_count'] }}件 / 異動 {{ person['transfer_count'] }}件</div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if transfer_candidates %}
+<section class="detail-card">
+  <div class="section-head">
+    <h3>人事異動ベース候補</h3>
+    <div class="small">新聞・公式の異動行から集約</div>
+  </div>
+  <div class="cards">
+    {% for item in transfer_candidates %}
+    <article class="card">
+      <div class="meta">{{ item['latest_effective_date'] or '日付不明' }} / 異動 {{ item['transfer_count'] }}件</div>
+      <h4>{{ item['display_name'] }}</h4>
+      <p>{{ item['current_department'] or '異動先不明' }}</p>
+      {% if item['previous_department'] %}
+      <div class="small">前部署: {{ item['previous_department'] }}</div>
+      {% endif %}
+      {% if item['candidate_person_name'] %}
+      <div class="small">
+        記事側候補:
+        {% if item['candidate_person_key'] %}
+        <a href="{{ url_for('person_detail', person_key=item['candidate_person_key']) }}">{{ item['candidate_person_name'] }}</a>
+        {% else %}
+        {{ item['candidate_person_name'] }}
+        {% endif %}
+        / confidence {{ '%.2f'|format(item['candidate_confidence'] or 0) }}
+      </div>
+      {% endif %}
+      {% if item['candidate_notes'] %}
+      <div class="small">{{ item['candidate_notes'] }}</div>
+      {% endif %}
+      {% if item['source_url'] %}
+      <div class="small"><a href="{{ item['source_url'] }}" target="_blank">{{ item['source_title'] }}</a></div>
+      {% else %}
+      <div class="small">{{ item['source_title'] }}</div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if mention_candidates %}
+<section class="detail-card">
+  <div class="section-head">
+    <h3>記事ベース候補</h3>
+    <div class="small">姓だけ担当者はここに残し、同年別部署ならまず別人扱いにする</div>
+  </div>
+  <div class="cards">
+    {% for item in mention_candidates %}
+    <article class="card">
+      <div class="meta">{{ item['latest_observed_at'] or '日付不明' }} / 記事 {{ item['mention_count'] }}件</div>
+      <h4>
+        {% if item.get('person_key') %}
+        <a href="{{ url_for('person_detail', person_key=item['person_key']) }}">{{ item['display_name'] }}</a>
+        {% else %}
+        {{ item['display_name'] }}
+        {% endif %}
+      </h4>
+      <p>{{ item['department_name'] or '部署不明' }}</p>
+      {% if item['contact_email'] or item['contact_phone'] %}
+      <div class="small">
+        {% if item['contact_email'] %}{{ item['contact_email'] }}{% endif %}
+        {% if item['contact_email'] and item['contact_phone'] %} / {% endif %}
+        {% if item['contact_phone'] %}{{ item['contact_phone'] }}{% endif %}
+      </div>
+      {% endif %}
+      {% if item.get('source_note') %}
+      <div class="small">{{ item['source_note'] }}</div>
+      {% endif %}
+      {% if item.get('latest_project_id') %}
+      <div class="small"><a href="{{ url_for('project_detail', project_id=item['latest_project_id']) }}">{{ item['latest_project_title'] }}</a></div>
+      {% elif item['latest_project_url'] %}
+      <div class="small"><a href="{{ item['latest_project_url'] }}" target="_blank">{{ item['latest_project_title'] }}</a></div>
+      {% else %}
+      <div class="small">{{ item['latest_project_title'] }}</div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

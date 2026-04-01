@@ -1,0 +1,6 @@
+year,source_type,label,url,status,notes
+2026,newspaper_transfer_list,佐賀新聞 人事異動 2026,https://www.saga-s.co.jp/feature/ud/jinji_2026,needs_manual_review,自動生成は成功したが rows=0。特集構造変更か本文未公開のため要確認
+2025,newspaper_transfer_list,佐賀新聞 人事異動 2025,https://www.saga-s.co.jp/feature/ud/jinji_2025,imported,build_newspaper_transfer_csv.py で1158件生成しDB取込済み
+2024,newspaper_transfer_list,佐賀新聞 人事異動 2024,https://www.saga-s.co.jp/feature/ud/jinji_2024,imported,build_newspaper_transfer_csv.py で1127件生成しDB取込済み。1件だけ部署空欄行あり
+2023,newspaper_transfer_list,佐賀新聞 人事異動 2023,https://www.saga-s.co.jp/feature/ud/jinji_2023,imported,build_newspaper_transfer_csv.py で1028件生成しDB取込済み
+2022,newspaper_transfer_list,佐賀新聞 人事異動 2022,https://www.saga-s.co.jp/feature/ud/jinji_2022,imported,build_newspaper_transfer_csv.py で1351件生成しDB取込済み

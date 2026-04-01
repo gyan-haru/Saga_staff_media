@@ -1,0 +1,346 @@
+{% extends 'layout.html' %}
+{% block title %}ネットワーク | 佐賀県 企画×担当者アーカイブ{% endblock %}
+{% block content %}
+<section class="detail-card">
+  <h2>企画と部署のネットワーク</h2>
+  <p class="small">
+    最近の企画を中心に、担当部署と担当者を部局クラスターへ寄せて可視化したビューです。
+    線は「その企画を誰が担ったか」「どの部署に属するか」を表します。
+  </p>
+  {% if selected_top_unit %}
+  <div class="network-filter-banner">
+    <div>
+      <strong>{{ selected_top_unit }}</strong> に関係する企画・部署・人物だけを表示しています。
+    </div>
+    <a class="chip" href="{{ url_for('network') }}">全体に戻る</a>
+  </div>
+  {% endif %}
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="small">描画中の企画</div>
+      <div class="stat-value">{{ stats['project_count'] }}件</div>
+    </div>
+    <div class="stat-card">
+      <div class="small">部署ノード</div>
+      <div class="stat-value">{{ stats['department_count'] }}件</div>
+    </div>
+    <div class="stat-card">
+      <div class="small">人物ノード</div>
+      <div class="stat-value">{{ stats['person_count'] }}件</div>
+    </div>
+    <div class="stat-card">
+      <div class="small">部局クラスター</div>
+      <div class="stat-value">{{ stats['cluster_count'] }}組</div>
+    </div>
+  </div>
+</section>
+
+<section class="detail-card">
+  <div class="section-head">
+    <div>
+      <h3>クラスター型ネットワーク</h3>
+      <div class="small">色は部局、丸の大きさは接続数に応じて変わります</div>
+    </div>
+    <div class="network-filters">
+      <button class="chip active" type="button" data-network-toggle="project">企画</button>
+      <button class="chip active" type="button" data-network-toggle="department">部署</button>
+      <button class="chip active" type="button" data-network-toggle="person">確定人物</button>
+      <button class="chip active" type="button" data-network-toggle="candidate_person">候補人物</button>
+    </div>
+  </div>
+
+  <div class="network-legend">
+    <span><i class="legend-swatch legend-project"></i>企画</span>
+    <span><i class="legend-swatch legend-department"></i>部署</span>
+    <span><i class="legend-swatch legend-person"></i>確定人物</span>
+    <span><i class="legend-swatch legend-candidate"></i>候補人物</span>
+  </div>
+
+  <div class="network-stage">
+    <svg id="cluster-network" viewBox="0 0 1200 820" aria-label="企画ネットワーク"></svg>
+    <div id="network-tooltip" class="network-tooltip" hidden></div>
+  </div>
+</section>
+
+{% if clusters %}
+<section class="detail-card">
+  <div class="section-head">
+    <h3>クラスター概要</h3>
+    <div class="small">どの部局に企画と人物が偏っているかを俯瞰</div>
+  </div>
+  <div class="cards">
+    {% for cluster in clusters %}
+    <article class="card">
+      <div class="meta">企画 {{ cluster['project_count'] }} / 部署 {{ cluster['department_count'] }} / 人物 {{ cluster['person_count'] }}</div>
+      <h4>{{ cluster['top_unit'] }}</h4>
+      {% if not selected_top_unit %}
+      <div class="small" style="margin-top: 0.4rem;"><a href="{{ url_for('network', top_unit=cluster['top_unit']) }}">この部局を見る</a></div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="detail-card">
+  <div class="section-head">
+    <h3>部署関係の読み筋</h3>
+    <div class="small">人事異動の流れと、同じ人物がまたいだ部局の両方を見る</div>
+  </div>
+  <div class="detail-grid">
+    <div class="list-panel">
+      <h4>異動フロー</h4>
+      {% if transfer_flows %}
+      <div class="history-list">
+        {% for item in transfer_flows %}
+        <div class="row">
+          <div>
+            <div>{{ item['source_top_unit'] }} → {{ item['target_top_unit'] }}</div>
+            <div class="small">異動 {{ item['count'] }}件</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="small">異動フローはまだ十分に組めていません。</div>
+      {% endif %}
+    </div>
+    <div class="list-panel">
+      <h4>継続テーマ</h4>
+      {% if continuity_links %}
+      <div class="history-list">
+        {% for item in continuity_links %}
+        <div class="row">
+          <div>
+            <div>{{ item['source_top_unit'] }} × {{ item['target_top_unit'] }}</div>
+            <div class="small">
+              共通人物 {{ item['count'] }}人
+              {% if item['sample_people'] %}
+              / {{ item['sample_people']|join(' / ') }}
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="small">継続テーマのまとまりはまだ十分に抽出できていません。</div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<script id="network-data" type="application/json">{{ graph|tojson }}</script>
+<script>
+(() => {
+  const dataElement = document.getElementById("network-data");
+  const svg = document.getElementById("cluster-network");
+  const tooltip = document.getElementById("network-tooltip");
+  if (!dataElement || !svg) return;
+
+  const graph = JSON.parse(dataElement.textContent || "{}");
+  const baseNodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+  const baseEdges = Array.isArray(graph.edges) ? graph.edges : [];
+  const enabledTypes = new Set(["project", "department", "person", "candidate_person"]);
+  const buttons = Array.from(document.querySelectorAll("[data-network-toggle]"));
+  const svgNS = "http://www.w3.org/2000/svg";
+  const width = 1200;
+  const height = 820;
+
+  function colorForGroup(groupName) {
+    const palette = [
+      "#3566c8", "#df7b2c", "#2f8f63", "#b84c65", "#7a58c1", "#2e9cb0",
+      "#8d6e1b", "#6b7280", "#d1495b", "#287271", "#9457eb", "#5470ff"
+    ];
+    let hash = 0;
+    for (const char of groupName || "未分類") hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    return palette[hash % palette.length];
+  }
+
+  function filteredGraph() {
+    const nodes = baseNodes.filter((node) => enabledTypes.has(node.type));
+    const ids = new Set(nodes.map((node) => node.id));
+    const edges = baseEdges.filter((edge) => ids.has(edge.source) && ids.has(edge.target));
+    return { nodes, edges };
+  }
+
+  function simulate(nodes, edges) {
+    if (!nodes.length) return;
+
+    const groups = [...new Set(nodes.map((node) => node.group || "未分類"))];
+    const anchors = new Map();
+    groups.forEach((group, index) => {
+      const angle = (Math.PI * 2 * index) / Math.max(groups.length, 1);
+      const radius = Math.min(width, height) * 0.28;
+      anchors.set(group, {
+        x: width / 2 + Math.cos(angle) * radius,
+        y: height / 2 + Math.sin(angle) * radius,
+      });
+    });
+
+    nodes.forEach((node, index) => {
+      const anchor = anchors.get(node.group || "未分類") || { x: width / 2, y: height / 2 };
+      node.x = anchor.x + ((index % 7) - 3) * 12;
+      node.y = anchor.y + ((index % 11) - 5) * 12;
+      node.vx = 0;
+      node.vy = 0;
+    });
+
+    const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+    const links = edges
+      .map((edge) => ({
+        source: nodeMap.get(edge.source),
+        target: nodeMap.get(edge.target),
+        weight: edge.weight || 1,
+      }))
+      .filter((edge) => edge.source && edge.target);
+
+    for (let tick = 0; tick < 220; tick += 1) {
+      for (let i = 0; i < nodes.length; i += 1) {
+        const left = nodes[i];
+        for (let j = i + 1; j < nodes.length; j += 1) {
+          const right = nodes[j];
+          let dx = right.x - left.x;
+          let dy = right.y - left.y;
+          const distanceSq = Math.max(dx * dx + dy * dy, 0.01);
+          const force = 180 / distanceSq;
+          dx /= Math.sqrt(distanceSq);
+          dy /= Math.sqrt(distanceSq);
+          left.vx -= dx * force;
+          left.vy -= dy * force;
+          right.vx += dx * force;
+          right.vy += dy * force;
+        }
+      }
+
+      for (const link of links) {
+        const dx = link.target.x - link.source.x;
+        const dy = link.target.y - link.source.y;
+        const distance = Math.max(Math.sqrt(dx * dx + dy * dy), 0.01);
+        const ideal = link.source.type === "project" || link.target.type === "project" ? 92 : 120;
+        const force = (distance - ideal) * 0.005 * Math.min(link.weight, 4);
+        const ux = dx / distance;
+        const uy = dy / distance;
+        link.source.vx += ux * force;
+        link.source.vy += uy * force;
+        link.target.vx -= ux * force;
+        link.target.vy -= uy * force;
+      }
+
+      for (const node of nodes) {
+        const anchor = anchors.get(node.group || "未分類") || { x: width / 2, y: height / 2 };
+        const attraction = node.type === "project" ? 0.006 : 0.009;
+        node.vx += (anchor.x - node.x) * attraction;
+        node.vy += (anchor.y - node.y) * attraction;
+        node.vx *= 0.84;
+        node.vy *= 0.84;
+        node.x = Math.min(width - 24, Math.max(24, node.x + node.vx));
+        node.y = Math.min(height - 24, Math.max(24, node.y + node.vy));
+      }
+    }
+  }
+
+  function showTooltip(event, node) {
+    tooltip.hidden = false;
+    tooltip.innerHTML = `
+      <strong>${node.label}</strong><br>
+      <span>${node.subtitle || node.group || ""}</span>
+    `;
+    const bounds = svg.getBoundingClientRect();
+    tooltip.style.left = `${event.clientX - bounds.left + 12}px`;
+    tooltip.style.top = `${event.clientY - bounds.top + 12}px`;
+  }
+
+  function hideTooltip() {
+    tooltip.hidden = true;
+  }
+
+  function render() {
+    const { nodes, edges } = filteredGraph();
+    svg.innerHTML = "";
+    hideTooltip();
+    if (!nodes.length) return;
+
+    simulate(nodes, edges);
+
+    const edgeLayer = document.createElementNS(svgNS, "g");
+    edgeLayer.setAttribute("class", "network-edges");
+    for (const edge of edges) {
+      const source = nodes.find((node) => node.id === edge.source);
+      const target = nodes.find((node) => node.id === edge.target);
+      if (!source || !target) continue;
+      const line = document.createElementNS(svgNS, "line");
+      line.setAttribute("x1", source.x);
+      line.setAttribute("y1", source.y);
+      line.setAttribute("x2", target.x);
+      line.setAttribute("y2", target.y);
+      line.setAttribute("stroke-width", String(Math.min(1 + edge.weight * 0.45, 3.8)));
+      edgeLayer.appendChild(line);
+    }
+    svg.appendChild(edgeLayer);
+
+    const nodeLayer = document.createElementNS(svgNS, "g");
+    nodeLayer.setAttribute("class", "network-nodes");
+
+    for (const node of nodes) {
+      const wrapper = node.href ? document.createElementNS(svgNS, "a") : document.createElementNS(svgNS, "g");
+      if (node.href) {
+        wrapper.setAttribute("href", node.href);
+      }
+      wrapper.setAttribute("class", `network-node network-node-${node.type}`);
+
+      const circle = document.createElementNS(svgNS, "circle");
+      circle.setAttribute("cx", node.x);
+      circle.setAttribute("cy", node.y);
+      circle.setAttribute("r", String(node.size));
+      circle.setAttribute("fill", node.type === "project" ? "#ffffff" : colorForGroup(node.group || "未分類"));
+      circle.setAttribute("stroke", node.type === "candidate_person" ? "#1f2328" : colorForGroup(node.group || "未分類"));
+      circle.setAttribute("stroke-width", node.type === "project" ? "1.8" : "1.2");
+      if (node.type === "candidate_person") {
+        circle.setAttribute("stroke-dasharray", "4 3");
+        circle.setAttribute("fill-opacity", "0.35");
+      }
+      wrapper.appendChild(circle);
+
+      const title = document.createElementNS(svgNS, "title");
+      title.textContent = `${node.label}${node.subtitle ? ` / ${node.subtitle}` : ""}`;
+      wrapper.appendChild(title);
+
+      wrapper.addEventListener("mouseenter", (event) => showTooltip(event, node));
+      wrapper.addEventListener("mousemove", (event) => showTooltip(event, node));
+      wrapper.addEventListener("mouseleave", hideTooltip);
+
+      if (node.type !== "project" || node.size >= 20) {
+        const text = document.createElementNS(svgNS, "text");
+        text.setAttribute("x", node.x);
+        text.setAttribute("y", node.y + node.size + 14);
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("class", "network-label");
+        text.textContent = node.short_label;
+        wrapper.appendChild(text);
+      }
+
+      nodeLayer.appendChild(wrapper);
+    }
+    svg.appendChild(nodeLayer);
+  }
+
+  for (const button of buttons) {
+    button.addEventListener("click", () => {
+      const targetType = button.dataset.networkToggle;
+      if (!targetType) return;
+      if (enabledTypes.has(targetType)) {
+        enabledTypes.delete(targetType);
+        button.classList.remove("active");
+      } else {
+        enabledTypes.add(targetType);
+        button.classList.add("active");
+      }
+      render();
+    });
+  }
+
+  render();
+})();
+</script>
+{% endblock %}

@@ -3,22 +3,36 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import io
-import os
 import re
-import tempfile
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Iterable
 
 import fitz  # PyMuPDF
 import requests
 from bs4 import BeautifulSoup
 
-from config import BASE_URL, PRESS_RELEASE_KEYWORDS, PROPOSAL_KEYWORDS
+from config import (
+    BASE_URL,
+    GENERIC_PRESS_RELEASE_LABELS,
+    GENERIC_PROPOSAL_LABELS,
+    LIST_SOURCES,
+    PRESS_RELEASE_KEYWORDS,
+    PROPOSAL_BROAD_KEYWORDS,
+    PROPOSAL_KEYWORDS,
+)
+
+try:
+    fitz.TOOLS.mupdf_display_errors(False)
+    fitz.TOOLS.mupdf_display_warnings(False)
+except Exception:
+    pass
 
 KANJI_DIGITS = {
     "零": 0, "〇": 0,
@@ -28,14 +42,18 @@ KANJI_DIGITS = {
 SMALL_UNITS = {"十": 10, "百": 100, "千": 1000}
 LARGE_UNITS = {"万": 10_000, "億": 100_000_000, "兆": 1_000_000_000_000}
 DATE_PATTERN = r"((?:令和|平成)\s*\d+\s*年\s*\d+\s*月\s*\d+\s*日|\d{4}\s*年\s*\d+\s*月\s*\d+\s*日|\d{4}[/-]\d{1,2}[/-]\d{1,2})"
-DEPARTMENT_PATTERN = r"(?:県|市|庁|課|部|局|室|センター|所|班|係|チーム|事務局|担当)"
-DEPARTMENT_SUFFIX_PATTERN = r"(?:課|部|局|室|センター|所|班|係|チーム|事務局|担当)"
+DEADLINE_DATE_PATTERN = r"((?:令和|平成)\s*\d+\s*年\s*\d+\s*月\s*\d+\s*日|\d{4}\s*年\s*\d+\s*月\s*\d+\s*日|\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}\s*月\s*\d{1,2}\s*日)"
+DEPARTMENT_PATTERN = r"(?:県|市|庁|課|部|局|室|センター|所|班|係|チーム|事務局|担当|グループ|学科|事業所)"
+DEPARTMENT_SUFFIX_PATTERN = r"(?:課|部|局|室|センター|所|班|係|チーム|事務局|担当|グループ|学科|事業所)"
 CONTACT_TRIGGER_PATTERN = r"(?:提出先|提出場所|問合せ先|問い合わせ先|問合わせ先|お問合せ先|お問合わせ先|申込先|担当窓口|担当部署|担当課|連絡先|書類等提出先及び問い合わせ先|に関するお問い合わせ|発注者)"
 KANJI_NUMBER_PATTERN = r"[〇零一二三四五六七八九十百千万億兆\d]+(?=\s*(?:年|月|日|時|分|秒|円|千円|万円|億円|件|人|回|部|社|校|丁目|番地?|号|年度|%))"
 PERSON_LABEL_PATTERN = r"(?:担当者?|担当者名|氏名|連絡担当者|担当窓口|担当)"
 PERSON_ANNOTATION_PATTERN = rf"[（(【\[]\s*{PERSON_LABEL_PATTERN}\s*[:：]\s*(.+?)\s*[)）】\]]"
 NAME_CHAR_CLASS = r"\u3400-\u9FFF\uF900-\uFAFF々ぁ-んァ-ヶーA-Za-z"
 NAME_PART_PATTERN = rf"[{NAME_CHAR_CLASS}]+"
+ROLE_TITLE_SUFFIX_PATTERN = r"(?:部長|課長|室長|局長|班長|係長|主査|主幹|主任|次長|参事|監|担当|校長|副校長|教頭|教諭)"
+ATTACHED_ROLE_TITLE_PATTERN = r"(?:班長|係長|主査|主幹|主任|次長|参事|監|担当|校長|副校長|教頭|教諭)"
+ATTACHED_ROLE_SUFFIX_PATTERN = r"(?:長|主任|主査|主幹|次長|参事|監|担当|校長|副校長|教頭|教諭)"
 BAD_PERSON_EXACT = {
     "問い合わせ先",
     "問合せ先",
@@ -50,6 +68,7 @@ BAD_PERSON_EXACT = {
     "部署",
     "部署名",
     "契約事項",
+    "事業",
     "佐賀県",
     "号",
     "給与",
@@ -65,6 +84,7 @@ BAD_PERSON_EXACT = {
     "時までに書留",
     "海岸",
     "calogeras",
+    "県下全域",
 }
 BAD_PERSON_SUBSTRINGS = (
     "問い合わせ",
@@ -100,6 +120,149 @@ BAD_PERSON_SUBSTRINGS = (
     "修了",
     "について",
     "書留",
+    "グループ",
+    "学科",
+    "エリア",
+    "周辺",
+    "全域",
+    "により",
+    "ことにより",
+    "主として",
+)
+BAD_PERSON_PREFIXES = (
+    "佐賀県",
+    "県立",
+    "市立",
+    "町立",
+    "村立",
+)
+SAGA_MUNICIPALITY_PREFIXES = (
+    "佐賀市",
+    "唐津市",
+    "鳥栖市",
+    "多久市",
+    "伊万里市",
+    "武雄市",
+    "鹿島市",
+    "小城市",
+    "嬉野市",
+    "神埼市",
+    "吉野ヶ里町",
+    "基山町",
+    "上峰町",
+    "みやき町",
+    "玄海町",
+    "有田町",
+    "大町町",
+    "江北町",
+    "白石町",
+    "太良町",
+)
+BAD_PERSON_FACILITY_TERMS = (
+    "博物館",
+    "図書館",
+    "美術館",
+    "資料館",
+    "記念館",
+    "文学館",
+    "科学館",
+    "会館",
+    "ホール",
+    "庁舎",
+    "県庁",
+    "役場",
+    "病院",
+    "学校",
+    "高校",
+    "中学校",
+    "小学校",
+    "大学",
+    "学園",
+    "研究所",
+    "体育館",
+)
+BAD_DEPARTMENT_EXACT = {
+    "問い合わせ先",
+    "問合せ先",
+    "問合わせ先",
+    "問い合せ先",
+    "お問合せ先",
+    "お問合わせ先",
+    "問い合わせ",
+    "問合せ",
+    "問合わせ",
+    "提出先",
+    "提出場所",
+    "担当課",
+    "担当部署",
+    "本件に係る問い合わせ先",
+    "本件に係る問合せ先",
+    "本件に係る問合わせ先",
+    "本件に関する問い合わせ先",
+    "本件に関する問合せ先",
+    "本件に関する問合わせ先",
+    "プレゼンテーションの日程及び場所",
+    "履行場所",
+    "開札場所",
+    "納入場所",
+    "実施場所",
+    "交付場所",
+    "開催場所",
+    "会場",
+    "業務場所",
+}
+BAD_DEPARTMENT_PREFIXES = (
+    "本 文",
+    "本文",
+    "プレゼンテーション",
+    "企画提案書",
+    "工事成績",
+    "なお、",
+    "なお",
+    "法人の場合",
+    "受託者名",
+    "代表者職",
+    "代表者氏名",
+    "氏名",
+    "職・氏名",
+    "な職氏名",
+    "記録者",
+    "申込書提出先",
+    "申請書提出先",
+    "提出書類提出先",
+    "提出書類送付先",
+    "送付先",
+    "郵送先",
+    "お問い合わせ先",
+    "お問い合せ先",
+    "事務所住所",
+)
+BAD_DEPARTMENT_SUBSTRINGS = (
+    "担当部署名",
+    "参加者氏名",
+    "会社名等",
+    "会社概要",
+    "パンフレット",
+    "実績書",
+    "誓約書",
+    "代表者",
+    "責任者",
+    "事務担当者",
+    "担当者を明確",
+    "担当者の範囲",
+    "氏名欄",
+    "判読不可能",
+    "企画提案書の内容",
+    "プレゼンテーションは参加者毎",
+    "結果の通知",
+    "工事成績",
+    "記録簿",
+    "丁目",
+    "番地",
+    "号室",
+    "オフィス",
+    "マンション",
+    "ビル",
 )
 
 
@@ -108,6 +271,8 @@ class CrawledLink:
     title: str
     url: str
     source_type: str
+    source_list_url: str = ""
+    source_department_name: str = ""
 
 
 @dataclass
@@ -154,6 +319,8 @@ class ProjectRecord:
     zip_urls: list[str]
     person_mentions: list[PersonMention]
     fetched_at: str
+    source_list_url: str = ""
+    source_department_name: str = ""
 
     @property
     def primary_mention(self) -> PersonMention:
@@ -199,41 +366,64 @@ class ProjectRecord:
 
 
 def get_html(url: str) -> str | None:
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
-        with urllib.request.urlopen(req) as response:
-            return response.read().decode("utf-8")
+        return fetch_url_bytes(url).decode("utf-8")
     except Exception as exc:
         print(f"Error fetching {url}: {exc}")
         return None
 
 
-def extract_pdf_text(pdf_url: str) -> str:
-    req = urllib.request.Request(pdf_url, headers={"User-Agent": "Mozilla/5.0"})
-    try:
-        with urllib.request.urlopen(req) as response:
-            pdf_data = response.read()
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(pdf_data)
-            pdf_path = tmp.name
-
+def fetch_url_bytes(url: str, *, attempts: int = 3, timeout: int = 20) -> bytes:
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         try:
-            doc = fitz.open(pdf_path)
-            return "\n".join(page.get_text() for page in doc)
-        finally:
-            os.remove(pdf_path)
-    except Exception as exc:
-        print(f"Error extracting PDF {pdf_url}: {exc}")
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            last_exc = exc
+            if 400 <= exc.code < 500 and exc.code not in {408, 429}:
+                break
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_exc = exc
+
+        if attempt < attempts:
+            time.sleep(min(0.5 * attempt, 1.5))
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError(f"Failed to fetch {url}")
+
+
+def extract_pdf_text_from_bytes(pdf_data: bytes, source_label: str) -> str:
+    if not pdf_data:
         return ""
+
+    doc = None
+    try:
+        doc = fitz.open(stream=pdf_data, filetype="pdf")
+        return "\n".join(page.get_text() for page in doc)
+    except Exception as exc:
+        print(f"Error extracting PDF {source_label}: {exc}")
+        return ""
+    finally:
+        if doc is not None:
+            doc.close()
+
+
+def extract_pdf_text(pdf_url: str) -> str:
+    try:
+        pdf_data = fetch_url_bytes(pdf_url)
+    except Exception as exc:
+        print(f"Error fetching PDF {pdf_url}: {exc}")
+        return ""
+    return extract_pdf_text_from_bytes(pdf_data, pdf_url)
 
 
 def extract_zip_pdfs_text(zip_url: str) -> str:
-    req = urllib.request.Request(zip_url, headers={"User-Agent": "Mozilla/5.0"})
     combined_text = ""
     try:
-        with urllib.request.urlopen(req) as response:
-            zip_data = response.read()
+        zip_data = fetch_url_bytes(zip_url)
 
         with zipfile.ZipFile(io.BytesIO(zip_data)) as archive:
             for file_info in archive.infolist():
@@ -241,17 +431,9 @@ def extract_zip_pdfs_text(zip_url: str) -> str:
                     continue
 
                 pdf_bytes = archive.read(file_info.filename)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                    tmp.write(pdf_bytes)
-                    pdf_path = tmp.name
-
-                try:
-                    doc = fitz.open(pdf_path)
-                    combined_text += "\n".join(page.get_text() for page in doc) + "\n---\n"
-                except Exception as exc:
-                    print(f"Error extracting PDF {file_info.filename} from ZIP: {exc}")
-                finally:
-                    os.remove(pdf_path)
+                pdf_text = extract_pdf_text_from_bytes(pdf_bytes, f"{file_info.filename} from ZIP")
+                if pdf_text:
+                    combined_text += pdf_text + "\n---\n"
     except Exception as exc:
         print(f"Error extracting ZIP {zip_url}: {exc}")
 
@@ -327,6 +509,30 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
+def compact_text(text: str) -> str:
+    return normalize_text(text).replace(" ", "")
+
+
+@lru_cache(maxsize=1)
+def known_department_labels() -> tuple[str, ...]:
+    labels: set[str] = set()
+    generic_labels = GENERIC_PRESS_RELEASE_LABELS | GENERIC_PROPOSAL_LABELS
+    for source in LIST_SOURCES:
+        label = normalize_text((source.get("department_name") or "").strip())
+        if not label or label in generic_labels:
+            continue
+        labels.add(label)
+        labels.add(label.replace(" ", ""))
+    return tuple(sorted(labels, key=len, reverse=True))
+
+
+def contains_known_department_label(text: str) -> bool:
+    compact = compact_text(text)
+    if not compact:
+        return False
+    return any(label.replace(" ", "") in compact for label in known_department_labels())
+
+
 def normalize_person_name(name: str) -> str:
     name = normalize_text(name)
     name = re.sub(r"(様|さん|氏|殿|担当)$", "", name).strip()
@@ -372,7 +578,14 @@ def extract_published_at_from_soup(soup: BeautifulSoup) -> str:
     return match.group(1) if match else ""
 
 
-def parse_japanese_date(date_str: str) -> dt.datetime | None:
+def _safe_datetime(year: int, month: int, day: int) -> dt.datetime | None:
+    try:
+        return dt.datetime(year, month, day)
+    except ValueError:
+        return None
+
+
+def parse_japanese_date(date_str: str, default_year: int | None = None) -> dt.datetime | None:
     if not date_str:
         return None
 
@@ -381,28 +594,37 @@ def parse_japanese_date(date_str: str) -> dt.datetime | None:
     match = re.search(r"令和(\d+)年(\d+)月(\d+)日", date_str)
     if match:
         y, m, d = int(match.group(1)), int(match.group(2)), int(match.group(3))
-        return dt.datetime(2018 + y, m, d)
+        return _safe_datetime(2018 + y, m, d)
 
     match = re.search(r"平成(\d+)年(\d+)月(\d+)日", date_str)
     if match:
         y, m, d = int(match.group(1)), int(match.group(2)), int(match.group(3))
-        return dt.datetime(1988 + y, m, d)
+        return _safe_datetime(1988 + y, m, d)
 
     match = re.search(r"(\d{4})年(\d+)月(\d+)日", date_str)
     if match:
         y, m, d = int(match.group(1)), int(match.group(2)), int(match.group(3))
-        return dt.datetime(y, m, d)
+        return _safe_datetime(y, m, d)
 
     match = re.search(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})", date_str)
     if match:
         y, m, d = int(match.group(1)), int(match.group(2)), int(match.group(3))
-        return dt.datetime(y, m, d)
+        return _safe_datetime(y, m, d)
+
+    match = re.search(r"(\d{1,2})月(\d{1,2})日", date_str)
+    if match and default_year:
+        m, d = int(match.group(1)), int(match.group(2))
+        inferred_year = default_year
+        parsed = _safe_datetime(inferred_year, m, d)
+        if parsed:
+            return parsed
+        return None
 
     return None
 
 
-def format_date_iso(date_str: str) -> str:
-    parsed = parse_japanese_date(date_str)
+def format_date_iso(date_str: str, default_year: int | None = None) -> str:
+    parsed = parse_japanese_date(date_str, default_year=default_year)
     return parsed.date().isoformat() if parsed else ""
 
 
@@ -411,10 +633,10 @@ def find_deadline(text: str, keywords: Iterable[str]) -> str:
     for i, line in enumerate(lines):
         for keyword in keywords:
             if keyword in line:
-                search_text = " ".join(lines[i:i + 8])
-                match = re.search(DATE_PATTERN, search_text)
-                if match:
-                    return match.group(1)
+                for candidate_line in lines[i:i + 8]:
+                    match = re.search(DEADLINE_DATE_PATTERN, candidate_line)
+                    if match:
+                        return match.group(1)
     return ""
 
 
@@ -517,6 +739,16 @@ def extract_people_from_annotation(line: str) -> list[str]:
     return extract_person_names(match.group(1))
 
 
+def strip_person_role_prefix(text: str) -> str:
+    normalized = normalize_text(text).strip()
+    if not normalized:
+        return ""
+    match = re.match(rf"^(?:[^\s]{{0,24}}?{ROLE_TITLE_SUFFIX_PATTERN})\s+(.+)$", normalized)
+    if match:
+        return match.group(1).strip()
+    return normalized
+
+
 def clean_person_name(text: str) -> str:
     if not text:
         return ""
@@ -524,7 +756,10 @@ def clean_person_name(text: str) -> str:
     text = re.sub(r"^(担当者?|担当者名|氏名|連絡担当者|担当窓口|担当|連絡先)[\s:：]*", "", text)
     text = re.sub(r"[（(【\[].*?[)）】\]]", "", text)
     text = re.split(r"(?:内線|直通|電話|TEL|Tel|Fax|FAX|メール|E-mail|Email|Mail|〒|https?://|@)", text, maxsplit=1)[0]
+    text = re.sub(r"\s+\d+$", "", text)
     text = re.sub(r"\s+", " ", text).strip(" 　:：,、/／-")
+    text = strip_person_role_prefix(text)
+    text = re.sub(r"\s*(?:氏|様|さん)$", "", text)
 
     for separator in ("、", ",", "，", "/", "／"):
         if separator in text:
@@ -592,7 +827,32 @@ def looks_like_name_token(text: str) -> bool:
         return False
     if any(token in candidate for token in BAD_PERSON_SUBSTRINGS):
         return False
+    if looks_like_non_person_entity(candidate):
+        return False
     return bool(re.fullmatch(NAME_PART_PATTERN, candidate))
+
+
+def looks_like_non_person_entity(text: str) -> bool:
+    candidate = clean_person_name(text)
+    if not candidate:
+        return False
+    if candidate.startswith(("その", "主として", "県下")):
+        return True
+    if candidate.startswith(BAD_PERSON_PREFIXES):
+        return True
+    if candidate.startswith(SAGA_MUNICIPALITY_PREFIXES):
+        return True
+    if candidate.endswith(("県内", "市内", "町内", "村内")):
+        return True
+    if candidate.endswith(("グループ", "学科", "エリア", "全域")):
+        return True
+    if any(token in candidate for token in BAD_PERSON_FACILITY_TERMS):
+        return True
+    if re.search(r"(?:都|道|府|県)[^\s]{0,16}(?:市|区|町|村)", candidate):
+        return True
+    if re.search(r"(?:市|区|町|村)[^\s]{0,12}(?:丁目|番地?|番|号|他)$", candidate):
+        return True
+    return False
 
 
 def is_valid_person_name(text: str) -> bool:
@@ -607,6 +867,8 @@ def is_valid_person_name(text: str) -> bool:
         return False
     if any(token in candidate for token in BAD_PERSON_SUBSTRINGS):
         return False
+    if looks_like_non_person_entity(candidate):
+        return False
     if candidate.endswith(("する", "ます", "まで", "こと", "先")):
         return False
     if len(candidate.split()) > 2:
@@ -618,14 +880,41 @@ def clean_department_name(text: str) -> str:
     if not text:
         return ""
     text = normalize_text(text)
-    text = re.sub(r"^\(?\d+\)?\s*", "", text)
+    text = re.sub(r"^[〇○●◎■□◆◇]\s*", "", text)
+    text = re.sub(r"^\(?\d+[.)．]?\)?\s*", "", text)
     text = re.sub(rf"^(?:{CONTACT_TRIGGER_PATTERN})[\s:：]*", "", text)
+    text = re.sub(
+        r"^(?:本件に(?:係る|関する)\s*)?(?:問い合わせ先|問合せ先|問合わせ先|問い合せ先|問い合わせ|問合せ|問合わせ)[\s:：]*",
+        "",
+        text,
+    )
+    text = re.sub(r"^[【\[]\s*(?:問い合わせ先|問合せ先|問合わせ先|お問合せ先|お問合わせ先)\s*[】\]]\s*", "", text)
+    text = re.sub(r"^(?:問い合わせ先|問合せ先|問合わせ先|お問合せ先|お問合わせ先)】\s*", "", text)
+    text = re.sub(
+        r"^(?:申込書提出先|申請書提出先|提出書類提出先|提出書類送付先|送付先|郵送先|お問い合わせ先|お問い合せ先|担当部局|担当部門|担当所属|事務所住所|所在地|住所)[\s:：]*",
+        "",
+        text,
+    )
+    if re.match(r"^[^:：]{1,20}[:：]", text):
+        label, rest = re.split(r"[:：]", text, maxsplit=1)
+        if not re.search(DEPARTMENT_PATTERN, label) and (
+            contains_known_department_label(rest) or re.search(DEPARTMENT_PATTERN, rest)
+        ):
+            text = rest
+    text = re.sub(r"^(?:履行場所|開札場所|業務場所|開催場所|会場)[\s:：]*", "", text)
+    text = re.sub(r"^担当[\s:：]+", "", text)
     text = re.sub(r"[［\[]担当[］\]]", " ", text)
     text = re.sub(PERSON_ANNOTATION_PATTERN, "", text)
+    text = re.sub(
+        r"(?<=\S)\s*[（(【\[](?=[^()（）\[\]【】]{0,40}(?:階|号室|県庁|新館|旧館|庁舎|会議室|〒|佐賀市|城内|丁目|番地?|番|号))[^()（）\[\]【】]{0,40}[)）】\]]$",
+        "",
+        text,
+    )
     text = re.sub(r"\s+担当者[\s:：]+.+$", "", text)
     text = re.split(r"(?:電話|TEL|Tel|Fax|FAX|メール|E-mail|Email|Mail|〒|https?://|@)", text, maxsplit=1)[0]
+    text = re.sub(r"(課|部|局|室|班|係|担当|チーム|センター)\1+", r"\1", text)
     text = re.sub(r"\s+", " ", text)
-    return text.strip(" 　:：,、・")
+    return text.strip(" 　:：,、・()（）[]【】")
 
 
 def is_valid_department_name(text: str) -> bool:
@@ -636,13 +925,36 @@ def is_valid_department_name(text: str) -> bool:
         return False
     if candidate in {"所在地", "連絡先", "場所", "部署", "担当", "担当者", "担当部署", "問い合わせ先", "問合せ先"}:
         return False
+    if candidate in BAD_DEPARTMENT_EXACT:
+        return False
+    if candidate.startswith(BAD_DEPARTMENT_PREFIXES):
+        return False
+    if re.match(r"^[アイウエオ]\s+", candidate):
+        return False
     if candidate.startswith(("場所 ", "会場 ")):
+        return False
+    if re.search(r"(?:丁目|番地?|番|号)(?:\D|$)", candidate) and not contains_known_department_label(candidate):
+        return False
+    if re.search(r"(?:号室|オフィス|マンション|ビル)$", candidate):
+        return False
+    if re.search(r"[0-9０-９]+\s*(?:部|枚|式|件|人)$", candidate):
         return False
     if re.search(r"[。!！?？「」『』【】]", candidate):
         return False
     if any(token in candidate for token in ("メール", "E-mail", "Email", "電話", "直通", "内線", "http", "@", "仕様書", "様式", "Web開催", "オンライン開催", "/", "|", "※")):
         return False
-    return bool(re.search(DEPARTMENT_PATTERN, candidate))
+    if any(token in candidate for token in BAD_DEPARTMENT_SUBSTRINGS):
+        return False
+    has_known_department = contains_known_department_label(candidate)
+    if re.search(r"(?:場合|こと|もの|ため|について|により|しなければ|できる|される)$", candidate) and not has_known_department:
+        return False
+    if re.search(rf"{DEPARTMENT_SUFFIX_PATTERN}$", candidate):
+        return True
+    if not re.search(r"(?:課|室|センター|所|事務局|部|局|班|係|チーム)\s+[^\s]{1,8}$", candidate):
+        return False
+    if not (has_known_department or re.search(r"(?:課|室|センター|所|事務局|部|局|班|係|チーム)", candidate)):
+            return False
+    return True
 
 
 def extract_person_from_labeled_line(line: str) -> str:
@@ -662,6 +974,14 @@ def extract_people_from_labeled_line(line: str) -> list[str]:
     return extract_person_names(match.group(1))
 
 
+def extract_people_from_role_line(line: str) -> list[str]:
+    normalized = normalize_text(line)
+    match = re.match(rf"^(?:[^\s]{{0,20}}?{ROLE_TITLE_SUFFIX_PATTERN})\s+(.+)$", normalized)
+    if not match:
+        return []
+    return extract_person_names(match.group(1))
+
+
 def extract_department_and_person_from_compound_line(line: str) -> tuple[str, str]:
     department, people = extract_department_and_people_from_compound_line(line)
     return department, people[0] if people else ""
@@ -669,6 +989,26 @@ def extract_department_and_person_from_compound_line(line: str) -> tuple[str, st
 
 def extract_department_and_people_from_compound_line(line: str) -> tuple[str, list[str]]:
     normalized = strip_wrapping_brackets(normalize_text(line))
+
+    attached_role_title_match = re.match(
+        rf"^(?P<department>.+?(?:課|部|局|室|センター|所|班|係|チーム|事務局|担当|グループ))(?P<role>{ATTACHED_ROLE_TITLE_PATTERN})\s+(?P<person>.+)$",
+        normalized,
+    )
+    if attached_role_title_match:
+        department = clean_department_name(attached_role_title_match.group("department"))
+        people = extract_person_names(attached_role_title_match.group("person"))
+        if is_valid_department_name(department) and people:
+            return department, people
+
+    attached_role_match = re.match(
+        rf"^(?P<department>.+?(?:課|部|局|室|センター|所|班|係|チーム|事務局|担当|グループ))(?P<role>{ATTACHED_ROLE_SUFFIX_PATTERN})\s+(?P<person>.+)$",
+        normalized,
+    )
+    if attached_role_match:
+        department = clean_department_name(attached_role_match.group("department"))
+        people = extract_person_names(attached_role_match.group("person"))
+        if is_valid_department_name(department) and people:
+            return department, people
 
     annotated_people = extract_people_from_annotation(normalized)
     if annotated_people:
@@ -680,20 +1020,28 @@ def extract_department_and_people_from_compound_line(line: str) -> tuple[str, li
     if len(parts) < 2:
         return "", []
 
+    candidates: list[tuple[str, list[str]]] = []
     for person_token_count in (2, 1):
         if len(parts) <= person_token_count:
             continue
         people = extract_person_names(" ".join(parts[-person_token_count:]))
         department = clean_department_name(" ".join(parts[:-person_token_count]))
         if people and is_valid_department_name(department):
-            return department, people
-    return "", []
+            candidates.append((department, people))
+    if not candidates:
+        return "", []
+    department, people = max(candidates, key=lambda item: (len(item[1]), len(item[0])))
+    return department, people
 
 
 def extract_department_candidate(line: str) -> str:
     inline_department, inline_people = extract_department_and_people_from_compound_line(line)
     if inline_department and inline_people:
         return ""
+    for inner in re.findall(r"[（(【\[]([^()（）\[\]【】]{1,80})[)）】\]]", normalize_text(line)):
+        department = clean_department_name(inner)
+        if is_valid_department_name(department):
+            return department
     department = clean_department_name(line)
     if not is_valid_department_name(department):
         return ""
@@ -826,9 +1174,14 @@ def find_person_mentions(text: str) -> list[PersonMention]:
     text = normalize_text(text)
     lines = [line.strip() for line in text.split("\n") if line.strip()]
     contact_signal_pattern = r"(内線|直通|電話|TEL|Tel|メール|E-mail|Email|Mail|@)"
+    candidate_mentions: list[list[PersonMention]] = []
+
+    def add_candidate(mentions: list[PersonMention]) -> None:
+        if mentions:
+            candidate_mentions.append(dedupe_person_mentions(mentions))
 
     # 1. 同一行に部署と担当者がある場合
-    for i, line in enumerate(lines[:40]):
+    for i, line in enumerate(lines):
         match = re.match(
             rf"^(?P<department>.+?{DEPARTMENT_PATTERN}.*?)\s+担当者?[\s:：]*(?P<person>.+)$",
             line,
@@ -840,15 +1193,15 @@ def find_person_mentions(text: str) -> list[PersonMention]:
         if is_valid_department_name(department) and people:
             candidate_block = collect_contact_block(lines, i, 5)
             snippet = "\n".join(candidate_block) if any(re.search(contact_signal_pattern, block_line) for block_line in candidate_block[1:]) else line
-            return build_person_mentions(department, people, "contact", snippet, 0.95, text)
+            add_candidate(build_person_mentions(department, people, "contact", snippet, 0.95, text))
 
     # 2. 記者発表ヘッダ型を優先して探す
-    for i, line in enumerate(lines[:40]):
+    for i, line in enumerate(lines):
         department, people = extract_department_and_people_from_compound_line(line)
         if department and people:
             candidate_block = collect_contact_block(lines, i, 5)
             snippet = "\n".join(candidate_block) if any(re.search(contact_signal_pattern, block_line) for block_line in candidate_block[1:]) else line
-            return build_person_mentions(department, people, "contact", snippet, 0.75, text)
+            add_candidate(build_person_mentions(department, people, "contact", snippet, 0.75, text))
 
         department = extract_department_candidate(line)
         if not department:
@@ -861,6 +1214,8 @@ def find_person_mentions(text: str) -> list[PersonMention]:
         for offset, next_line in enumerate(candidate_block[1:], start=1):
             line_index = i + offset
             people = extract_people_from_labeled_line(next_line)
+            if not people:
+                people = extract_people_from_role_line(next_line)
             if people:
                 people_index = line_index
                 break
@@ -880,7 +1235,7 @@ def find_person_mentions(text: str) -> list[PersonMention]:
             snippet_start = department_index if people_index is None else min(department_index, people_index)
             snippet = "\n".join(collect_contact_block(lines, snippet_start, 5))
             confidence = 0.9 if people else 0.55
-            return build_person_mentions(department, people, "contact", snippet, confidence, text)
+            add_candidate(build_person_mentions(department, people, "contact", snippet, confidence, text))
 
     # 3. 問い合わせ先ブロック
     for i, line in enumerate(lines):
@@ -897,6 +1252,8 @@ def find_person_mentions(text: str) -> list[PersonMention]:
             line_index = i + offset
             if not people:
                 people = extract_people_from_labeled_line(block_line)
+                if not people:
+                    people = extract_people_from_role_line(block_line)
                 if people:
                     people_index = line_index
 
@@ -924,10 +1281,10 @@ def find_person_mentions(text: str) -> list[PersonMention]:
             snippet_start = min(snippet_start_candidates) if snippet_start_candidates else i
             snippet = "\n".join(collect_contact_block(lines, snippet_start, 6))
             confidence = 0.9 if people else 0.5
-            return build_person_mentions(department, people, "contact", snippet, confidence, text)
+            add_candidate(build_person_mentions(department, people, "contact", snippet, confidence, text))
 
     # 4. 担当者だけ明示される場合は直前の部署行を拾う
-    for i, line in enumerate(lines[:80]):
+    for i, line in enumerate(lines):
         people = extract_people_from_labeled_line(line)
         if not people:
             continue
@@ -942,9 +1299,24 @@ def find_person_mentions(text: str) -> list[PersonMention]:
                 break
 
         snippet = "\n".join(lines[max(0, i - 2):i + 3])
-        return build_person_mentions(department, people, "contact", snippet, 0.9, text)
+        add_candidate(build_person_mentions(department, people, "contact", snippet, 0.9, text))
 
-    return []
+    if not candidate_mentions:
+        return []
+
+    best_mentions = max(
+        candidate_mentions,
+        key=lambda mentions: (
+            1 if any(mention.person_name for mention in mentions) else 0,
+            sum(1 for mention in mentions if mention.person_name),
+            1 if any(mention.department_name for mention in mentions) else 0,
+            sum(1 for mention in mentions if mention.department_name),
+            max(mention.source_confidence for mention in mentions),
+            1 if any(mention.contact_email or mention.contact_phone for mention in mentions) else 0,
+            max(len(mention.department_name) for mention in mentions),
+        ),
+    )
+    return best_mentions
 
 
 def find_department_and_person(text: str) -> tuple[str, str, str, str]:
@@ -987,10 +1359,16 @@ def summarize_text(text: str, max_length: int = 220, title: str = "") -> str:
     return fallback[:max_length] + "..." if len(fallback) > max_length else fallback
 
 
-def link_keywords_for_source(source_type: str, link_keywords: list[str] | None = None) -> list[str]:
+def link_keywords_for_source(
+    source_type: str,
+    link_keywords: list[str] | None = None,
+    link_match_mode: str | None = None,
+) -> list[str]:
     if link_keywords:
         return link_keywords
     if source_type == "proposal":
+        if link_match_mode == "broad":
+            return PROPOSAL_BROAD_KEYWORDS
         return PROPOSAL_KEYWORDS
     return PRESS_RELEASE_KEYWORDS
 
@@ -1000,13 +1378,15 @@ def collect_links_from_list_page(
     source_type: str,
     max_pages: int = 1,
     link_keywords: list[str] | None = None,
+    link_match_mode: str | None = None,
+    source_department_name: str = "",
 ) -> list[CrawledLink]:
     html = get_html(list_url)
     if not html:
         return []
 
     soup = BeautifulSoup(html, "html.parser")
-    keywords = link_keywords_for_source(source_type, link_keywords)
+    keywords = link_keywords_for_source(source_type, link_keywords, link_match_mode)
     require_keyword_match = bool(link_keywords) or source_type == "proposal"
     links: dict[str, CrawledLink] = {}
 
@@ -1026,7 +1406,13 @@ def collect_links_from_list_page(
 
             full_url = urllib.parse.urljoin(BASE_URL, href)
             if full_url not in links:
-                links[full_url] = CrawledLink(title=text.strip() or full_url, url=full_url, source_type=source_type)
+                links[full_url] = CrawledLink(
+                    title=text.strip() or full_url,
+                    url=full_url,
+                    source_type=source_type,
+                    source_list_url=list_url,
+                    source_department_name=source_department_name,
+                )
                 found_any = True
         return found_any
 
@@ -1091,6 +1477,9 @@ def extract_project_record(link: CrawledLink) -> ProjectRecord | None:
 
     combined_text = normalize_text(combined_text)
 
+    published_at = detect_published_at(html_text, extract_published_at_from_soup(soup))
+    published_year = int(published_at[:4]) if re.match(r"^\d{4}-\d{2}-\d{2}$", published_at) else None
+
     application_deadline = find_deadline(
         combined_text,
         ["参加申込締切", "参加申込書", "参加資格確認申請書", "入札参加"],
@@ -1128,7 +1517,6 @@ def extract_project_record(link: CrawledLink) -> ProjectRecord | None:
                 )
             ]
 
-    published_at = detect_published_at(html_text, extract_published_at_from_soup(soup))
     summary = summarize_text(purpose or html_text, title=article_title)
     fetched_at = dt.datetime.now().isoformat(timespec="seconds")
 
@@ -1139,8 +1527,8 @@ def extract_project_record(link: CrawledLink) -> ProjectRecord | None:
         summary=summary,
         purpose=purpose,
         budget=budget,
-        application_deadline=format_date_iso(application_deadline),
-        submission_deadline=format_date_iso(submission_deadline),
+        application_deadline=format_date_iso(application_deadline, default_year=published_year),
+        submission_deadline=format_date_iso(submission_deadline, default_year=published_year),
         published_at=published_at,
         raw_text=combined_text,
         html_text=html_text,
@@ -1148,4 +1536,6 @@ def extract_project_record(link: CrawledLink) -> ProjectRecord | None:
         zip_urls=zip_urls,
         person_mentions=person_mentions,
         fetched_at=fetched_at,
+        source_list_url=link.source_list_url,
+        source_department_name=link.source_department_name,
     )
