@@ -1,0 +1,9 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+exports/
+
+data/saga_media.db
+data/crawled_urls.txt
+data/.DS_Store
