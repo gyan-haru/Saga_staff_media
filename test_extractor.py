@@ -2,6 +2,7 @@ import urllib.error
 import unittest
 from unittest import mock
 
+import extractor as extractor_module
 from extractor import (
     clean_department_name,
     detect_published_at,
@@ -44,12 +45,31 @@ class ExtractorTestCase(unittest.TestCase):
         self.assertEqual(mocked_urlopen.call_count, 2)
 
     def test_extract_pdf_text_returns_empty_for_broken_pdf(self):
-        with mock.patch("extractor.fetch_url_bytes", return_value=b"broken-pdf"), mock.patch(
-            "extractor.fitz.open", side_effect=RuntimeError("broken pdf")
-        ), mock.patch("builtins.print"):
-            text = extract_pdf_text("https://example.com/broken.pdf")
+        with mock.patch("extractor.fetch_url_bytes", return_value=b"broken-pdf"), mock.patch("builtins.print"):
+            if extractor_module.fitz is not None:
+                with mock.patch("extractor.fitz.open", side_effect=RuntimeError("broken pdf")):
+                    text = extract_pdf_text("https://example.com/broken.pdf")
+            else:
+                with mock.patch("extractor.PdfReader", side_effect=RuntimeError("broken pdf")):
+                    text = extract_pdf_text("https://example.com/broken.pdf")
 
         self.assertEqual(text, "")
+
+    def test_extract_pdf_text_falls_back_to_pypdf_when_fitz_is_unavailable(self):
+        class FakePage:
+            def extract_text(self):
+                return "fallback text"
+
+        class FakeReader:
+            def __init__(self, _stream):
+                self.pages = [FakePage()]
+
+        with mock.patch("extractor.fetch_url_bytes", return_value=b"pdf-bytes"), mock.patch(
+            "extractor.fitz", None
+        ), mock.patch("extractor.PdfReader", FakeReader):
+            text = extract_pdf_text("https://example.com/fallback.pdf")
+
+        self.assertEqual(text, "fallback text")
 
     def test_press_release_header_extracts_department_and_person(self):
         text = """

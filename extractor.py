@@ -14,9 +14,18 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Iterable
 
-import fitz  # PyMuPDF
 import requests
 from bs4 import BeautifulSoup
+
+try:
+    import fitz  # PyMuPDF
+except Exception:
+    fitz = None
+
+try:
+    from pypdf import PdfReader
+except Exception:
+    PdfReader = None
 
 from config import (
     BASE_URL,
@@ -28,11 +37,12 @@ from config import (
     PROPOSAL_KEYWORDS,
 )
 
-try:
-    fitz.TOOLS.mupdf_display_errors(False)
-    fitz.TOOLS.mupdf_display_warnings(False)
-except Exception:
-    pass
+if fitz is not None:
+    try:
+        fitz.TOOLS.mupdf_display_errors(False)
+        fitz.TOOLS.mupdf_display_warnings(False)
+    except Exception:
+        pass
 
 KANJI_DIGITS = {
     "零": 0, "〇": 0,
@@ -399,16 +409,27 @@ def extract_pdf_text_from_bytes(pdf_data: bytes, source_label: str) -> str:
     if not pdf_data:
         return ""
 
-    doc = None
-    try:
-        doc = fitz.open(stream=pdf_data, filetype="pdf")
-        return "\n".join(page.get_text() for page in doc)
-    except Exception as exc:
-        print(f"Error extracting PDF {source_label}: {exc}")
-        return ""
-    finally:
-        if doc is not None:
-            doc.close()
+    if fitz is not None:
+        doc = None
+        try:
+            doc = fitz.open(stream=pdf_data, filetype="pdf")
+            return "\n".join(page.get_text() for page in doc)
+        except Exception as exc:
+            print(f"Error extracting PDF {source_label} with PyMuPDF: {exc}")
+        finally:
+            if doc is not None:
+                doc.close()
+
+    if PdfReader is not None:
+        try:
+            reader = PdfReader(io.BytesIO(pdf_data))
+            return "\n".join((page.extract_text() or "") for page in reader.pages)
+        except Exception as exc:
+            print(f"Error extracting PDF {source_label} with pypdf: {exc}")
+            return ""
+
+    print(f"Error extracting PDF {source_label}: no PDF backend available")
+    return ""
 
 
 def extract_pdf_text(pdf_url: str) -> str:
