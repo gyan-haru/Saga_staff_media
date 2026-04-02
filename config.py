@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import os
+import shutil
 from pathlib import Path
 
 BASE_URL = "https://www.pref.saga.lg.jp"
@@ -82,11 +83,26 @@ def resolve_runtime_input_path(
     runtime_default: Path,
     bundled_default: Path,
 ) -> Path:
+    def ensure_seed_file(target: Path) -> Path:
+        if target.exists():
+            return target
+        if bundled_default.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.copy2(bundled_default, target)
+            except OSError:
+                return bundled_default
+            if target.exists():
+                return target
+        return bundled_default if bundled_default.exists() else target
+
     explicit = os.getenv(env_name)
     if explicit:
-        return Path(explicit)
+        return ensure_seed_file(Path(explicit))
     if runtime_default.exists():
         return runtime_default
+    if runtime_default != bundled_default:
+        return ensure_seed_file(runtime_default)
     return bundled_default
 
 
