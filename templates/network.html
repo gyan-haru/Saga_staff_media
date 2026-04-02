@@ -29,6 +29,10 @@
       <div class="stat-value">{{ stats['person_count'] }}件</div>
     </div>
     <div class="stat-card">
+      <div class="small">テーマノード</div>
+      <div class="stat-value">{{ stats['topic_count'] }}件</div>
+    </div>
+    <div class="stat-card">
       <div class="small">部局クラスター</div>
       <div class="stat-value">{{ stats['cluster_count'] }}組</div>
     </div>
@@ -46,6 +50,7 @@
       <button class="chip active" type="button" data-network-toggle="department">部署</button>
       <button class="chip active" type="button" data-network-toggle="person">確定人物</button>
       <button class="chip active" type="button" data-network-toggle="candidate_person">候補人物</button>
+      <button class="chip active" type="button" data-network-toggle="topic">テーマ</button>
     </div>
   </div>
 
@@ -54,6 +59,7 @@
     <span><i class="legend-swatch legend-department"></i>部署</span>
     <span><i class="legend-swatch legend-person"></i>確定人物</span>
     <span><i class="legend-swatch legend-candidate"></i>候補人物</span>
+    <span><i class="legend-swatch legend-topic"></i>テーマ</span>
   </div>
 
   <div class="network-stage">
@@ -71,7 +77,7 @@
   <div class="cards">
     {% for cluster in clusters %}
     <article class="card">
-      <div class="meta">企画 {{ cluster['project_count'] }} / 部署 {{ cluster['department_count'] }} / 人物 {{ cluster['person_count'] }}</div>
+      <div class="meta">企画 {{ cluster['project_count'] }} / 部署 {{ cluster['department_count'] }} / 人物 {{ cluster['person_count'] }} / テーマ {{ cluster['topic_count'] }}</div>
       <h4>{{ cluster['top_unit'] }}</h4>
       {% if not selected_top_unit %}
       <div class="small" style="margin-top: 0.4rem;"><a href="{{ url_for('network', top_unit=cluster['top_unit']) }}">この部局を見る</a></div>
@@ -141,7 +147,7 @@
   const graph = JSON.parse(dataElement.textContent || "{}");
   const baseNodes = Array.isArray(graph.nodes) ? graph.nodes : [];
   const baseEdges = Array.isArray(graph.edges) ? graph.edges : [];
-  const enabledTypes = new Set(["project", "department", "person", "candidate_person"]);
+  const enabledTypes = new Set(["project", "department", "person", "candidate_person", "topic"]);
   const buttons = Array.from(document.querySelectorAll("[data-network-toggle]"));
   const svgNS = "http://www.w3.org/2000/svg";
   const width = 1200;
@@ -293,9 +299,10 @@
       circle.setAttribute("cx", node.x);
       circle.setAttribute("cy", node.y);
       circle.setAttribute("r", String(node.size));
-      circle.setAttribute("fill", node.type === "project" ? "#ffffff" : colorForGroup(node.group || "未分類"));
-      circle.setAttribute("stroke", node.type === "candidate_person" ? "#1f2328" : colorForGroup(node.group || "未分類"));
-      circle.setAttribute("stroke-width", node.type === "project" ? "1.8" : "1.2");
+      const baseColor = colorForGroup(node.group || "未分類");
+      circle.setAttribute("fill", node.type === "project" ? "#ffffff" : (node.type === "topic" ? "#f5d97b" : baseColor));
+      circle.setAttribute("stroke", node.type === "candidate_person" ? "#1f2328" : (node.type === "topic" ? "#9b6a00" : baseColor));
+      circle.setAttribute("stroke-width", node.type === "project" ? "1.8" : (node.type === "topic" ? "1.6" : "1.2"));
       if (node.type === "candidate_person") {
         circle.setAttribute("stroke-dasharray", "4 3");
         circle.setAttribute("fill-opacity", "0.35");

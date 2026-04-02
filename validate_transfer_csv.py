@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from config import TRANSFER_DATA_DIR
+
 REQUIRED_COLUMNS = (
     "source_type",
     "title",
@@ -113,13 +115,14 @@ def main() -> int:
     args = parser.parse_args()
 
     csv_paths: list[Path] = []
-    if args.dir:
-        csv_paths.extend(sorted(path for path in Path(args.dir).glob("*.csv") if is_transfer_data_csv(path)))
+    target_dir = Path(args.dir) if args.dir else TRANSFER_DATA_DIR
+    if target_dir.exists():
+        csv_paths.extend(sorted(path for path in target_dir.glob("*.csv") if is_transfer_data_csv(path)))
     if args.csv_path:
         csv_paths.append(Path(args.csv_path))
 
     if not csv_paths:
-        print("no csv files specified")
+        print(f"no csv files found in {target_dir}")
         return 0
 
     has_error = False

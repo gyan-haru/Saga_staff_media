@@ -14,12 +14,14 @@ from database import (
     fetch_pending_identity_reviews,
     fetch_people,
     fetch_person_detail,
+    fetch_policy_topic_index,
     fetch_project_detail,
     fetch_slot_candidates_for_mention,
     fetch_staff_roster,
     get_connection,
     get_or_create_department,
     group_department_profiles_by_top_unit,
+    import_policy_sources_csv,
     import_transfers_csv,
     init_db,
     link_person_mention_to_timeline_recommendation,
@@ -29,6 +31,7 @@ from database import (
     resolve_department_hierarchy,
     resolve_public_appearance,
     save_project_record,
+    score_person_identity_candidate,
     score_slot_candidate,
     titles_look_related,
 )
@@ -127,6 +130,36 @@ class DatabaseIdentityTestCase(unittest.TestCase):
 
             self.assertEqual(tables, {"department_aliases"})
             self.assertTrue({"department_id", "alias_name", "normalized_alias", "alias_type"}.issubset(alias_columns))
+
+    def test_init_db_creates_policy_topic_tables(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            init_db(db_path)
+
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            tables = {
+                row[0]
+                for row in cur.execute(
+                    "select name from sqlite_master where type = 'table' and name in ('policy_sources', 'policy_topics', 'topic_source_mentions', 'project_topic_links', 'person_topic_rollups')"
+                ).fetchall()
+            }
+            topic_columns = {
+                row[1]
+                for row in cur.execute("pragma table_info(policy_topics)").fetchall()
+            }
+            rollup_columns = {
+                row[1]
+                for row in cur.execute("pragma table_info(person_topic_rollups)").fetchall()
+            }
+            conn.close()
+
+            self.assertEqual(
+                tables,
+                {"policy_sources", "policy_topics", "topic_source_mentions", "project_topic_links", "person_topic_rollups"},
+            )
+            self.assertTrue({"topic_key", "topic_year", "origin_type", "keywords_json"}.issubset(topic_columns))
+            self.assertTrue({"person_id", "topic_id", "priority_project_count", "spotlight_score"}.issubset(rollup_columns))
 
     def test_get_or_create_department_canonicalizes_prefecture_department_variants(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2395,6 +2428,111 @@ class DatabaseIdentityTestCase(unittest.TestCase):
         self.assertGreater(related["score"], unrelated["score"])
         self.assertTrue(related["department_theme_match"])
 
+    def test_score_person_identity_candidate_rewards_policy_topic_continuity(self):
+        mention = {
+            "normalized_person_name": "田中太郎",
+            "raw_person_name": "田中 太郎",
+            "raw_department_name": "佐賀県 地域交流部 交通政策課",
+            "department_id": None,
+            "project_title": "地域交通再編プロジェクト",
+            "project_summary": "",
+            "project_purpose": "",
+            "project_published_at": "2025-05-10",
+            "project_fetched_at": "2025-05-10T12:00:00",
+            "policy_topic_names": "地域交通|公共交通",
+            "priority_policy_topic_names": "地域交通",
+            "name_quality": "full_name",
+            "contact_email": "",
+            "contact_phone": "",
+        }
+        person = {
+            "display_name": "田中 太郎",
+            "normalized_name": "田中太郎",
+        }
+        matching_context = {
+            "emails": set(),
+            "phones": set(),
+            "departments": set(),
+            "department_top_units": {"地域交流部"},
+            "department_theme_profiles": {"交通"},
+            "project_theme_profiles": {"交通"},
+            "policy_topic_names": {"地域交通", "公共交通"},
+            "priority_policy_topic_names": {"地域交通"},
+            "policy_topic_tokens": {"地域交通", "公共交通", "交通"},
+            "policy_topic_years": {"地域交通": {2025}, "公共交通": {2024, 2025}},
+            "department_ids": set(),
+            "activity_dates": [],
+            "transfer_events": [],
+            "project_count": 3,
+        }
+        conflicting_context = {
+            **matching_context,
+            "department_top_units": {"産業労働部"},
+            "department_theme_profiles": {"産業"},
+            "project_theme_profiles": {"企業"},
+            "policy_topic_names": {"企業誘致", "産業振興"},
+            "priority_policy_topic_names": {"企業誘致"},
+            "policy_topic_tokens": {"企業誘致", "産業振興", "企業", "産業"},
+            "policy_topic_years": {"企業誘致": {2025}},
+        }
+
+        matched = score_person_identity_candidate(mention, person, matching_context)
+        conflicted = score_person_identity_candidate(mention, person, conflicting_context)
+
+        self.assertTrue(matched["policy_topic_match"])
+        self.assertTrue(matched["policy_topic_recent_match"])
+        self.assertTrue(matched["priority_policy_topic_match"])
+        self.assertGreater(matched["score"], conflicted["score"])
+
+    def test_score_slot_candidate_rewards_policy_topic_continuity(self):
+        mention = {
+            "normalized_person_name": "田中",
+            "raw_person_name": "田中",
+            "name_quality": "surname_only",
+            "raw_department_name": "",
+            "department_id": None,
+            "project_title": "県内再編事業",
+            "project_summary": "",
+            "project_purpose": "",
+            "project_published_at": "2025-05-10",
+            "project_fetched_at": "2025-05-10T12:00:00",
+            "policy_topic_names": "地域交通|公共交通",
+            "priority_policy_topic_names": "地域交通",
+            "source_confidence": 0.9,
+        }
+        matched_slot = {
+            "normalized_person_name": "田中太郎",
+            "display_name": "田中 太郎",
+            "raw_department_name": "",
+            "department_id": None,
+            "active_from": "2025-04-01",
+            "active_to": "",
+            "person_id": 1,
+            "person_policy_topic_names": "地域交通|公共交通",
+            "person_priority_policy_topic_names": "地域交通",
+            "person_policy_topic_years": "地域交通@2025,公共交通@2024",
+        }
+        unmatched_slot = {
+            "normalized_person_name": "田中太郎",
+            "display_name": "田中 太郎",
+            "raw_department_name": "",
+            "department_id": None,
+            "active_from": "2025-04-01",
+            "active_to": "",
+            "person_id": 2,
+            "person_policy_topic_names": "企業誘致|産業振興",
+            "person_priority_policy_topic_names": "企業誘致",
+            "person_policy_topic_years": "企業誘致@2025",
+        }
+
+        matched = score_slot_candidate(mention, matched_slot)
+        unmatched = score_slot_candidate(mention, unmatched_slot)
+
+        self.assertTrue(matched["policy_topic_match"])
+        self.assertTrue(matched["policy_topic_recent_match"])
+        self.assertTrue(matched["priority_policy_topic_match"])
+        self.assertGreater(matched["score"], unmatched["score"])
+
     def test_fetch_staff_roster_includes_active_transfer_slot_roster(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.db"
@@ -2646,9 +2784,154 @@ class DatabaseIdentityTestCase(unittest.TestCase):
             self.assertEqual(payload["selected_top_unit"], "地域交流部")
             self.assertEqual(payload["stats"]["project_count"], 1)
             self.assertEqual(payload["stats"]["department_count"], 1)
+            self.assertGreaterEqual(payload["stats"]["topic_count"], 1)
             self.assertEqual(len(payload["clusters"]), 1)
             self.assertEqual(payload["clusters"][0]["top_unit"], "地域交流部")
             self.assertTrue(all(node["group"] == "地域交流部" for node in payload["graph"]["nodes"]))
+            self.assertTrue(any(node["type"] == "topic" for node in payload["graph"]["nodes"]))
+
+    def test_save_project_record_creates_project_topics_and_person_topic_rollups(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            init_db(db_path)
+
+            record = ProjectRecord(
+                title="子育て支援デジタル相談体制構築業務",
+                url="https://example.com/topic-rollup-project",
+                source_type="proposal",
+                summary="子育て支援と相談体制をデジタルで強化する",
+                purpose="こども家庭の相談導線を整備する",
+                budget="",
+                application_deadline="",
+                submission_deadline="",
+                published_at="2026-05-01",
+                raw_text="raw",
+                html_text="html",
+                pdf_urls=[],
+                zip_urls=[],
+                person_mentions=[
+                    PersonMention(
+                        department_name="佐賀県 こども未来課 子育てし大県推進担当",
+                        person_name="山田 花子",
+                        person_key="",
+                        person_role="contact",
+                        contact_email="",
+                        contact_phone="",
+                        extracted_section="topic-rollup",
+                        name_quality="full_name",
+                        source_confidence=0.96,
+                    )
+                ],
+                fetched_at="2026-05-01T12:00:00",
+            )
+            save_project_record(record, db_path)
+
+            detail = fetch_project_detail(1, db_path)
+            people = fetch_people(limit=10, db_path=db_path)
+            person_detail = fetch_person_detail(people[0]["person_key"], db_path)
+
+            self.assertTrue(detail["topic_links"])
+            self.assertTrue(any(item["name"] in {"子育て", "相談", "デジタル"} for item in detail["topic_links"]))
+            self.assertTrue(person_detail["topic_rollups"])
+            self.assertTrue(any(item["topic_name"] in {"子育て", "相談", "デジタル"} for item in person_detail["topic_rollups"]))
+
+    def test_import_policy_sources_csv_links_priority_topics_to_projects(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            csv_path = Path(tmpdir) / "policy_sources.csv"
+            init_db(db_path)
+
+            record = ProjectRecord(
+                title="地域交通システム再編方針策定業務",
+                url="https://example.com/policy-linked-project",
+                source_type="proposal",
+                summary="地域交通と観光周遊を再編する",
+                purpose="持続可能な地域交通を整える",
+                budget="",
+                application_deadline="",
+                submission_deadline="",
+                published_at="2026-04-20",
+                raw_text="raw",
+                html_text="html",
+                pdf_urls=[],
+                zip_urls=[],
+                person_mentions=[
+                    PersonMention(
+                        department_name="佐賀県 地域交流部 交通政策課",
+                        person_name="田中 太郎",
+                        person_key="",
+                        person_role="contact",
+                        contact_email="",
+                        contact_phone="",
+                        extracted_section="policy-source-link",
+                        name_quality="full_name",
+                        source_confidence=0.95,
+                    )
+                ],
+                fetched_at="2026-04-20T12:00:00",
+            )
+            save_project_record(record, db_path)
+
+            csv_path.write_text(
+                "\n".join(
+                    [
+                        "source_type,title,url,published_at,summary,raw_text,topic_names",
+                        'governor_press,"令和8年度重点施策記者会見",https://example.com/policy-source,2026-04-01,"地域交通と観光周遊を強化する","県として地域交通と観光の連携を重点化する","地域交通|観光周遊"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            counts = import_policy_sources_csv(csv_path, db_path)
+            detail = fetch_project_detail(1, db_path)
+            topic_index = fetch_policy_topic_index(db_path=db_path)
+
+            self.assertEqual(counts["sources"], 1)
+            self.assertTrue(any(item["is_priority"] for item in detail["topic_links"]))
+            self.assertTrue(any(item["name"] == "地域交通" and item["origin_type"] == "policy_source" for item in detail["topic_links"]))
+            self.assertTrue(any(item["name"] == "地域交通" for item in topic_index))
+
+    def test_fetch_policy_topic_index_returns_people_and_projects(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            init_db(db_path)
+
+            record = ProjectRecord(
+                title="観光周遊促進業務",
+                url="https://example.com/topic-index-project",
+                source_type="proposal",
+                summary="観光周遊と宿泊消費を伸ばす",
+                purpose="県内周遊を促進する",
+                budget="",
+                application_deadline="",
+                submission_deadline="",
+                published_at="2026-06-02",
+                raw_text="raw",
+                html_text="html",
+                pdf_urls=[],
+                zip_urls=[],
+                person_mentions=[
+                    PersonMention(
+                        department_name="佐賀県 地域交流部 観光課",
+                        person_name="佐藤 花子",
+                        person_key="",
+                        person_role="contact",
+                        contact_email="",
+                        contact_phone="",
+                        extracted_section="topic-index",
+                        name_quality="full_name",
+                        source_confidence=0.95,
+                    )
+                ],
+                fetched_at="2026-06-02T12:00:00",
+            )
+            save_project_record(record, db_path)
+
+            topics = fetch_policy_topic_index(db_path=db_path)
+
+            self.assertTrue(topics)
+            self.assertTrue(topics[0]["projects"])
+            self.assertTrue(topics[0]["people"])
 
     def test_compute_slot_timeline_recommendations_prefers_distinct_slots_for_same_year_cross_department_surnames(self):
         with tempfile.TemporaryDirectory() as tmpdir:

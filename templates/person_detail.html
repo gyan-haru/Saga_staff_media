@@ -33,8 +33,40 @@
       <div class="small">近い職員</div>
       <div class="stat-value">{{ related_people|length }}人</div>
     </div>
+    <div class="stat-card">
+      <div class="small">重点テーマ</div>
+      <div class="stat-value">{{ topic_summary['topic_count'] }}件</div>
+    </div>
+  </div>
+  {% if topic_summary['focus_topic_names'] %}
+  <p>よく関わるテーマ: {{ topic_summary['focus_topic_names']|join(' / ') }}</p>
+  {% endif %}
+</section>
+
+{% if topic_rollups %}
+<section class="detail-card">
+  <h3>重点施策への関与</h3>
+  <div class="cards">
+    {% for item in topic_rollups %}
+    <article class="card">
+      <div class="meta">
+        {% if item['topic_year'] %}{{ item['topic_year'] }} / {% endif %}
+        {{ '重点施策' if item['priority_project_count'] else '推定テーマ' }}
+      </div>
+      <h4>{{ item['topic_name'] }}</h4>
+      {% if item['description'] %}
+      <p>{{ item['description'] }}</p>
+      {% endif %}
+      <div class="small">関与企画 {{ item['project_count'] }}件 / 関与部署 {{ item['department_count'] }}部署</div>
+      <div class="small">継続スコア {{ '%.1f'|format(item['continuity_score'] or 0) }} / 可視性 {{ '%.1f'|format(item['visibility_score'] or 0) }}</div>
+      {% if item['first_seen_at'] or item['last_seen_at'] %}
+      <div class="small">{{ item['first_seen_at'] or '日付不明' }} - {{ item['last_seen_at'] or '日付不明' }}</div>
+      {% endif %}
+    </article>
+    {% endfor %}
   </div>
 </section>
+{% endif %}
 
 {% if movement_summary.latest_transfer %}
 <section class="detail-card">

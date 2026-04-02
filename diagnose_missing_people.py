@@ -7,7 +7,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from config import DB_PATH
+from config import DB_PATH, EXPORT_DIR
 from extractor import normalize_text
 
 CONTACT_SIGNAL_PATTERN = re.compile(r"(内線|直通|電話|TEL|E-mail|Email|Mail|メール|@)")
@@ -121,7 +121,7 @@ def write_report(rows: list[sqlite3.Row], output_path: Path) -> Counter:
 def main() -> int:
     parser = argparse.ArgumentParser(description="担当者が空欄のURLを原因別に診断してCSV化する")
     parser.add_argument("--db", default=str(DB_PATH), help="対象DBパス")
-    parser.add_argument("--output", default="exports/missing_person_diagnosis.csv", help="出力CSVパス")
+    parser.add_argument("--output", default=str(EXPORT_DIR / "missing_person_diagnosis.csv"), help="出力CSVパス")
     args = parser.parse_args()
 
     rows = fetch_missing_people_rows(args.db)

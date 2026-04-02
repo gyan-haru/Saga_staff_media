@@ -11,7 +11,7 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
-from config import CRAWLED_URL_LOG_PATH, DB_PATH, LIST_SOURCES
+from config import CRAWLED_URL_LOG_PATH, DB_PATH, EXPORT_DIR, LIST_SOURCES
 from extractor import CrawledLink, BASE_URL, get_html, link_keywords_for_source, normalize_text
 
 
@@ -282,7 +282,7 @@ def summarize_rows(rows: list[dict[str, Any]]) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="list_sources ごとの収集・保存・担当者抽出の歩留まりを診断する")
     parser.add_argument("--db", default=str(DB_PATH), help="対象DBパス")
-    parser.add_argument("--output", default="exports/source_coverage_diagnosis.csv", help="出力CSVパス")
+    parser.add_argument("--output", default=str(EXPORT_DIR / "source_coverage_diagnosis.csv"), help="出力CSVパス")
     parser.add_argument("--max-pages", type=int, default=1, help="各一覧URLで遡るページ数")
     args = parser.parse_args()
 

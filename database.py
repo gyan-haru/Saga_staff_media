@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import re
 import sqlite3
 import urllib.parse
@@ -138,6 +139,29 @@ GENERIC_PROJECT_THEME_TOKENS = {
     "お知らせ",
     "掲載",
     "公表",
+}
+GENERIC_POLICY_TOPIC_TOKENS = GENERIC_PROJECT_THEME_TOKENS | {
+    "重点",
+    "施策",
+    "方針",
+    "計画",
+    "戦略",
+    "会見",
+    "記者会見",
+    "予算",
+    "政策",
+    "取組",
+    "取り組み",
+    "実現",
+    "推進",
+    "支える",
+}
+POLICY_SOURCE_TYPE_LABELS = {
+    "governor_press": "知事会見",
+    "budget_brief": "予算資料",
+    "policy_brief": "施策資料",
+    "priority_plan": "重点方針",
+    "manual": "手動登録",
 }
 
 
@@ -356,6 +380,84 @@ def init_db(db_path: Path | str = DB_PATH) -> None:
                 FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS policy_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type TEXT NOT NULL,
+                source_key TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                url TEXT DEFAULT '',
+                published_at TEXT DEFAULT '',
+                source_year INTEGER DEFAULT 0,
+                summary TEXT DEFAULT '',
+                raw_text TEXT DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS policy_topics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topic_key TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                normalized_name TEXT NOT NULL,
+                topic_year INTEGER DEFAULT 0,
+                origin_type TEXT DEFAULT 'project_inferred',
+                description TEXT DEFAULT '',
+                keywords_json TEXT DEFAULT '[]',
+                priority_weight REAL DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS topic_source_mentions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topic_id INTEGER NOT NULL,
+                policy_source_id INTEGER NOT NULL,
+                evidence_snippet TEXT DEFAULT '',
+                confidence REAL DEFAULT 0,
+                matched_by TEXT DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(topic_id, policy_source_id),
+                FOREIGN KEY(topic_id) REFERENCES policy_topics(id) ON DELETE CASCADE,
+                FOREIGN KEY(policy_source_id) REFERENCES policy_sources(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS project_topic_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                topic_id INTEGER NOT NULL,
+                confidence REAL DEFAULT 0,
+                matched_by TEXT DEFAULT '',
+                evidence_snippet TEXT DEFAULT '',
+                is_priority INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, topic_id),
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY(topic_id) REFERENCES policy_topics(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS person_topic_rollups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id INTEGER NOT NULL,
+                topic_id INTEGER NOT NULL,
+                topic_year INTEGER DEFAULT 0,
+                project_count INTEGER DEFAULT 0,
+                department_count INTEGER DEFAULT 0,
+                priority_project_count INTEGER DEFAULT 0,
+                involvement_score REAL DEFAULT 0,
+                continuity_score REAL DEFAULT 0,
+                visibility_score REAL DEFAULT 0,
+                spotlight_score REAL DEFAULT 0,
+                first_seen_at TEXT DEFAULT '',
+                last_seen_at TEXT DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(person_id, topic_id, topic_year),
+                FOREIGN KEY(person_id) REFERENCES people(id) ON DELETE CASCADE,
+                FOREIGN KEY(topic_id) REFERENCES policy_topics(id) ON DELETE CASCADE
+            );
+
             CREATE INDEX IF NOT EXISTS idx_projects_source_type ON projects(source_type);
             CREATE INDEX IF NOT EXISTS idx_projects_published_at ON projects(published_at);
             CREATE INDEX IF NOT EXISTS idx_department_aliases_department_id ON department_aliases(department_id);
@@ -377,6 +479,13 @@ def init_db(db_path: Path | str = DB_PATH) -> None:
             CREATE INDEX IF NOT EXISTS idx_employee_slots_person_id ON employee_slots(person_id);
             CREATE INDEX IF NOT EXISTS idx_slot_candidates_mention_id ON slot_candidates(person_mention_id);
             CREATE INDEX IF NOT EXISTS idx_slot_candidates_slot_id ON slot_candidates(employee_slot_id);
+            CREATE INDEX IF NOT EXISTS idx_policy_sources_year ON policy_sources(source_year);
+            CREATE INDEX IF NOT EXISTS idx_policy_topics_year ON policy_topics(topic_year);
+            CREATE INDEX IF NOT EXISTS idx_project_topic_links_project_id ON project_topic_links(project_id);
+            CREATE INDEX IF NOT EXISTS idx_project_topic_links_topic_id ON project_topic_links(topic_id);
+            CREATE INDEX IF NOT EXISTS idx_topic_source_mentions_topic_id ON topic_source_mentions(topic_id);
+            CREATE INDEX IF NOT EXISTS idx_person_topic_rollups_person_id ON person_topic_rollups(person_id);
+            CREATE INDEX IF NOT EXISTS idx_person_topic_rollups_topic_year ON person_topic_rollups(topic_year);
             """
         )
         conn.commit()
@@ -926,6 +1035,20 @@ def department_theme_overlap(left: str, right: str) -> bool:
 
 def project_theme_tokens(*texts: str) -> set[str]:
     tokens: set[str] = set()
+
+    def expand_fragments(candidate: str) -> set[str]:
+        expanded: set[str] = set()
+        for fragment in re.findall(r"[一-龥]+[ぁ-ん]*|[ァ-ヴー]+|[A-Za-z]+", candidate):
+            item = fragment.strip()
+            if len(item) >= 2:
+                expanded.add(item)
+            if re.fullmatch(r"[一-龥]{4,12}", item):
+                for index in range(0, len(item), 2):
+                    pair = item[index:index + 2]
+                    if len(pair) == 2:
+                        expanded.add(pair)
+        return expanded
+
     for text in texts:
         normalized = normalize_text(text or "")
         if not normalized:
@@ -942,12 +1065,143 @@ def project_theme_tokens(*texts: str) -> set[str]:
             if candidate.startswith(("令和", "佐賀県")):
                 continue
             tokens.add(candidate)
+            for fragment in expand_fragments(candidate):
+                if len(fragment) >= 2 and fragment not in GENERIC_PROJECT_THEME_TOKENS:
+                    tokens.add(fragment)
             for suffix in DEPARTMENT_THEME_SUFFIXES:
                 if candidate.endswith(suffix) and len(candidate) > len(suffix) + 1:
                     trimmed = candidate[: -len(suffix)]
                     if len(trimmed) >= 2 and trimmed not in GENERIC_PROJECT_THEME_TOKENS:
                         tokens.add(trimmed)
     return tokens
+
+
+def extract_year_from_date_text(value: str) -> int:
+    parsed = parse_iso_date(value)
+    if parsed:
+        return parsed.year
+    match = re.search(r"(20\d{2})", value or "")
+    if match:
+        return int(match.group(1))
+    return 0
+
+
+def normalize_topic_name(name: str) -> str:
+    return normalize_text(name or "").replace(" ", "")
+
+
+def is_valid_topic_name(name: str) -> bool:
+    candidate = normalize_text(name or "").strip()
+    if not candidate or len(candidate) < 2 or len(candidate) > 14:
+        return False
+    if candidate in GENERIC_POLICY_TOPIC_TOKENS:
+        return False
+    if "年度" in candidate or "佐賀県" in candidate:
+        return False
+    if candidate.endswith(("について", "に関する", "についての", "の推進", "の実施", "の開催")):
+        return False
+    if candidate.startswith(("令和", "佐賀県", "県")):
+        return False
+    if re.fullmatch(r"[A-Za-z0-9]+", candidate):
+        return False
+    return True
+
+
+def build_policy_source_key(source_type: str, title: str, url: str = "", published_at: str = "") -> str:
+    stable_url = (url or "").strip()
+    stable_title = normalize_text(title or "")
+    stable_date = (published_at or "").strip()
+    anchor = stable_url or stable_title
+    return f"{source_type}:{anchor}:{stable_date}"
+
+
+def build_policy_topic_key(name: str, topic_year: int = 0, origin_type: str = "project_inferred") -> str:
+    normalized = normalize_topic_name(name)
+    return f"{origin_type}:{topic_year}:{normalized}"
+
+
+def decode_topic_keywords(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    keywords: list[str] = []
+    for item in payload:
+        token = normalize_text(str(item or "")).strip()
+        if token and token not in keywords:
+            keywords.append(token)
+    return keywords
+
+
+def encode_topic_keywords(values: list[str] | set[str]) -> str:
+    unique: list[str] = []
+    for item in values:
+        token = normalize_text(str(item or "")).strip()
+        if token and token not in unique:
+            unique.append(token)
+    return json.dumps(unique, ensure_ascii=False)
+
+
+def topic_tokens_for_matching(topic_name: str, description: str = "", keywords: list[str] | None = None) -> set[str]:
+    tokens = set(project_theme_tokens(topic_name, description))
+    for keyword in keywords or []:
+        if is_valid_topic_name(keyword):
+            tokens.add(normalize_text(keyword))
+    if is_valid_topic_name(topic_name):
+        tokens.add(normalize_text(topic_name))
+    return {token for token in tokens if is_valid_topic_name(token)}
+
+
+def derive_ranked_topic_candidates(
+    title: str,
+    summary: str = "",
+    purpose: str = "",
+    department_name: str = "",
+    extra_texts: list[str] | None = None,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    scores: dict[str, int] = {}
+
+    def add_tokens(tokens: set[str], weight: int) -> None:
+        for token in tokens:
+            if not is_valid_topic_name(token):
+                continue
+            normalized = normalize_topic_name(token)
+            if not normalized:
+                continue
+            scores[token] = scores.get(token, 0) + weight
+
+    add_tokens(project_theme_tokens(title), 5)
+    add_tokens(project_theme_tokens(summary), 3)
+    add_tokens(project_theme_tokens(purpose), 4)
+    add_tokens(department_theme_tokens(department_name), 2)
+    for text in extra_texts or []:
+        add_tokens(project_theme_tokens(text), 2)
+
+    ranked = sorted(scores.items(), key=lambda item: (item[1], len(item[0]), item[0]), reverse=True)
+    chosen: list[dict[str, Any]] = []
+    for token, score in ranked:
+        if any(
+            token != existing["name"]
+            and (token in existing["name"] or existing["name"] in token)
+            and existing["score"] >= score
+            for existing in chosen
+        ):
+            continue
+        chosen.append(
+            {
+                "name": token,
+                "score": score,
+                "keywords": [token],
+            }
+        )
+        if len(chosen) >= limit:
+            break
+    return chosen
 
 
 def partial_person_name_match(left: str, right: str) -> bool:
@@ -1443,6 +1697,759 @@ def group_department_profiles_by_top_unit(
     return payload
 
 
+def upsert_policy_source(
+    conn: sqlite3.Connection,
+    source_type: str,
+    title: str,
+    url: str = "",
+    published_at: str = "",
+    summary: str = "",
+    raw_text: str = "",
+) -> int:
+    source_year = extract_year_from_date_text(published_at or title)
+    source_key = build_policy_source_key(source_type, title, url, published_at)
+    conn.execute(
+        """
+        INSERT INTO policy_sources (
+            source_type, source_key, title, url, published_at, source_year, summary, raw_text
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_key) DO UPDATE SET
+            title = excluded.title,
+            url = excluded.url,
+            published_at = excluded.published_at,
+            source_year = excluded.source_year,
+            summary = excluded.summary,
+            raw_text = excluded.raw_text,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (source_type, source_key, title, url, published_at, source_year, summary, raw_text),
+    )
+    row = conn.execute("SELECT id FROM policy_sources WHERE source_key = ?", (source_key,)).fetchone()
+    return int(row["id"])
+
+
+def upsert_policy_topic(
+    conn: sqlite3.Connection,
+    name: str,
+    *,
+    topic_year: int = 0,
+    origin_type: str = "project_inferred",
+    description: str = "",
+    keywords: list[str] | set[str] | None = None,
+    priority_weight: float = 0.0,
+) -> int | None:
+    cleaned_name = normalize_text(name or "").strip()
+    if not is_valid_topic_name(cleaned_name):
+        return None
+    topic_key = build_policy_topic_key(cleaned_name, topic_year, origin_type)
+    normalized_name = normalize_topic_name(cleaned_name)
+    encoded_keywords = encode_topic_keywords(list(keywords or []) or [cleaned_name])
+    conn.execute(
+        """
+        INSERT INTO policy_topics (
+            topic_key, name, normalized_name, topic_year, origin_type, description, keywords_json, priority_weight
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(topic_key) DO UPDATE SET
+            description = CASE
+                WHEN IFNULL(TRIM(excluded.description), '') != '' THEN excluded.description
+                ELSE policy_topics.description
+            END,
+            keywords_json = CASE
+                WHEN IFNULL(TRIM(excluded.keywords_json), '') != '' THEN excluded.keywords_json
+                ELSE policy_topics.keywords_json
+            END,
+            priority_weight = MAX(policy_topics.priority_weight, excluded.priority_weight),
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (
+            topic_key,
+            cleaned_name,
+            normalized_name,
+            topic_year,
+            origin_type,
+            (description or "").strip(),
+            encoded_keywords,
+            float(priority_weight or 0),
+        ),
+    )
+    row = conn.execute("SELECT id FROM policy_topics WHERE topic_key = ?", (topic_key,)).fetchone()
+    return int(row["id"]) if row else None
+
+
+def replace_policy_source_topics(
+    conn: sqlite3.Connection,
+    policy_source_id: int,
+    topic_candidates: list[dict[str, Any]],
+) -> int:
+    conn.execute("DELETE FROM topic_source_mentions WHERE policy_source_id = ?", (policy_source_id,))
+    inserted = 0
+    for candidate in topic_candidates:
+        topic_id = upsert_policy_topic(
+            conn,
+            candidate.get("name") or "",
+            topic_year=int(candidate.get("topic_year") or 0),
+            origin_type="policy_source",
+            description=candidate.get("description") or "",
+            keywords=candidate.get("keywords") or [],
+            priority_weight=float(candidate.get("priority_weight") or 0.8),
+        )
+        if not topic_id:
+            continue
+        conn.execute(
+            """
+            INSERT INTO topic_source_mentions (
+                topic_id, policy_source_id, evidence_snippet, confidence, matched_by
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(topic_id, policy_source_id) DO UPDATE SET
+                evidence_snippet = excluded.evidence_snippet,
+                confidence = excluded.confidence,
+                matched_by = excluded.matched_by,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                topic_id,
+                policy_source_id,
+                (candidate.get("evidence_snippet") or "").strip(),
+                float(candidate.get("confidence") or 0.85),
+                (candidate.get("matched_by") or "policy_source").strip(),
+            ),
+        )
+        inserted += 1
+    return inserted
+
+
+def derive_policy_source_topic_candidates(
+    title: str,
+    summary: str = "",
+    raw_text: str = "",
+    topic_names: list[str] | None = None,
+    topic_year: int = 0,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    if topic_names:
+        names = [normalize_text(item or "").strip() for item in topic_names]
+        ranked_names = [item for item in names if is_valid_topic_name(item)]
+    else:
+        ranked_names = [
+            item["name"]
+            for item in derive_ranked_topic_candidates(title, summary, raw_text, limit=limit)
+        ]
+
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    source_text = " ".join(part for part in [title, summary, raw_text] if part).strip()
+    for index, name in enumerate(ranked_names):
+        normalized = normalize_topic_name(name)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        candidates.append(
+            {
+                "name": name,
+                "topic_year": topic_year,
+                "description": normalize_text(summary or "").strip(),
+                "keywords": sorted(topic_tokens_for_matching(name, summary)),
+                "priority_weight": max(0.55, 0.92 - index * 0.08),
+                "evidence_snippet": source_text[:240],
+                "confidence": max(0.68, 0.95 - index * 0.05),
+                "matched_by": "policy_source_declared" if topic_names else "policy_source_inferred",
+            }
+        )
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+def linked_person_ids_for_project(conn: sqlite3.Connection, project_id: int) -> list[int]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT person_id
+        FROM (
+            SELECT a.person_id AS person_id
+            FROM appearances a
+            WHERE a.project_id = ?
+              AND a.person_id IS NOT NULL
+            UNION
+            SELECT pil.person_id AS person_id
+            FROM person_identity_links pil
+            JOIN person_mentions pm ON pm.id = pil.person_mention_id
+            WHERE pm.project_id = ?
+              AND pil.person_id IS NOT NULL
+              AND pil.link_status IN ('reviewed_match', 'auto_matched')
+        )
+        """,
+        (project_id, project_id),
+    ).fetchall()
+    return [int(row["person_id"]) for row in rows]
+
+
+def collect_project_topic_candidates(
+    conn: sqlite3.Connection,
+    project_row: sqlite3.Row | dict[str, Any],
+) -> list[dict[str, Any]]:
+    row = dict(project_row)
+    project_year = extract_year_from_date_text(row.get("published_at") or row.get("fetched_at") or "")
+    resolved = resolve_public_appearance(conn, row, row)
+    department_name = ""
+    if resolved:
+        department_name = clean_department_name(resolved.get("display_department_name", "") or "")
+    if not department_name:
+        department_name = clean_department_name(row.get("source_department_name") or "")
+
+    base_candidates = derive_ranked_topic_candidates(
+        row.get("title") or "",
+        row.get("summary") or "",
+        row.get("purpose") or "",
+        department_name=department_name,
+        extra_texts=[row.get("source_department_name") or ""],
+        limit=4,
+    )
+    project_tokens = set(project_theme_tokens(row.get("title") or "", row.get("summary") or "", row.get("purpose") or ""))
+    project_tokens |= department_theme_tokens(department_name)
+    blob = normalize_text(" ".join(
+        part for part in [
+            row.get("title") or "",
+            row.get("summary") or "",
+            row.get("purpose") or "",
+            department_name,
+        ]
+        if part
+    ))
+
+    linked: dict[int, dict[str, Any]] = {}
+    for candidate in base_candidates:
+        topic_id = upsert_policy_topic(
+            conn,
+            candidate["name"],
+            topic_year=project_year,
+            origin_type="project_inferred",
+            description=row.get("summary") or row.get("purpose") or "",
+            keywords=candidate["keywords"],
+            priority_weight=min(0.25 + candidate["score"] * 0.03, 0.72),
+        )
+        if not topic_id:
+            continue
+        linked[topic_id] = {
+            "topic_id": topic_id,
+            "confidence": min(0.36 + candidate["score"] * 0.06, 0.82),
+            "matched_by": "project_inferred_theme",
+            "evidence_snippet": candidate["name"],
+            "is_priority": 0,
+        }
+
+    if project_year:
+        policy_topic_rows = conn.execute(
+            """
+            SELECT *
+            FROM policy_topics
+            WHERE origin_type = 'policy_source'
+              AND (topic_year = 0 OR topic_year IN (?, ?, ?))
+            ORDER BY priority_weight DESC, name ASC
+            """,
+            (project_year, max(project_year - 1, 0), project_year + 1),
+        ).fetchall()
+    else:
+        policy_topic_rows = conn.execute(
+            """
+            SELECT *
+            FROM policy_topics
+            WHERE origin_type = 'policy_source'
+            ORDER BY priority_weight DESC, name ASC
+            """
+        ).fetchall()
+
+    for topic_row in policy_topic_rows:
+        topic_keywords = topic_tokens_for_matching(
+            topic_row["name"] or "",
+            topic_row["description"] or "",
+            decode_topic_keywords(topic_row["keywords_json"] or "[]"),
+        )
+        if not topic_keywords:
+            continue
+        topic_name = normalize_text(topic_row["name"] or "")
+        exact_match = bool(topic_name and topic_name in blob)
+        overlap = sorted(project_tokens & topic_keywords)
+        fuzzy_match = any(token in blob for token in topic_keywords if len(token) >= 2)
+        if not exact_match and not overlap and not fuzzy_match:
+            continue
+
+        confidence = 0.54
+        if exact_match:
+            confidence += 0.18
+        if overlap:
+            confidence += min(0.08 * len(overlap), 0.18)
+        if fuzzy_match and not overlap:
+            confidence += 0.06
+        topic_year = int(topic_row["topic_year"] or 0)
+        if topic_year and project_year:
+            if topic_year == project_year:
+                confidence += 0.08
+            elif abs(topic_year - project_year) == 1:
+                confidence += 0.03
+        confidence += min(float(topic_row["priority_weight"] or 0) * 0.12, 0.1)
+        topic_id = int(topic_row["id"])
+        current = linked.get(topic_id)
+        payload = {
+            "topic_id": topic_id,
+            "confidence": min(confidence, 0.98),
+            "matched_by": "policy_source_exact" if exact_match else "policy_source_overlap",
+            "evidence_snippet": " / ".join(overlap[:4]) if overlap else (topic_row["name"] or ""),
+            "is_priority": 1,
+        }
+        if current is None or payload["confidence"] > current["confidence"]:
+            linked[topic_id] = payload
+
+    return sorted(
+        linked.values(),
+        key=lambda item: (item["is_priority"], item["confidence"], item["topic_id"]),
+        reverse=True,
+    )[:6]
+
+
+def refresh_project_topic_links(
+    conn: sqlite3.Connection,
+    project_ids: list[int] | None = None,
+) -> int:
+    if project_ids is not None and not project_ids:
+        return 0
+    params: list[Any] = []
+    query = """
+        SELECT p.*, a.raw_department_name, a.raw_person_name, pe.person_key
+        FROM projects p
+        LEFT JOIN appearances a ON a.project_id = p.id
+        LEFT JOIN people pe ON pe.id = a.person_id
+        WHERE p.review_status != 'rejected'
+    """
+    if project_ids:
+        placeholders = ", ".join("?" for _ in project_ids)
+        query += f" AND p.id IN ({placeholders})"
+        params.extend(project_ids)
+    rows = conn.execute(query, params).fetchall()
+    if project_ids:
+        conn.executemany("DELETE FROM project_topic_links WHERE project_id = ?", [(project_id,) for project_id in project_ids])
+    else:
+        conn.execute("DELETE FROM project_topic_links")
+
+    inserted = 0
+    for row in rows:
+        project_id = int(row["id"])
+        for candidate in collect_project_topic_candidates(conn, row):
+            conn.execute(
+                """
+                INSERT INTO project_topic_links (
+                    project_id, topic_id, confidence, matched_by, evidence_snippet, is_priority
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, topic_id) DO UPDATE SET
+                    confidence = excluded.confidence,
+                    matched_by = excluded.matched_by,
+                    evidence_snippet = excluded.evidence_snippet,
+                    is_priority = excluded.is_priority,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    project_id,
+                    candidate["topic_id"],
+                    float(candidate["confidence"]),
+                    candidate["matched_by"],
+                    candidate["evidence_snippet"],
+                    int(candidate["is_priority"]),
+                ),
+            )
+            inserted += 1
+    return inserted
+
+
+def refresh_person_topic_rollups(
+    conn: sqlite3.Connection,
+    person_ids: list[int] | None = None,
+) -> int:
+    if person_ids is not None and not person_ids:
+        return 0
+    if person_ids is not None:
+        placeholders = ", ".join("?" for _ in person_ids)
+        conn.execute(f"DELETE FROM person_topic_rollups WHERE person_id IN ({placeholders})", person_ids)
+        filter_sql = f" AND lp.person_id IN ({placeholders})"
+        params: list[Any] = person_ids[:]
+    else:
+        conn.execute("DELETE FROM person_topic_rollups")
+        filter_sql = ""
+        params = []
+
+    rows = conn.execute(
+        f"""
+        WITH linked_projects AS (
+            SELECT DISTINCT a.person_id, a.project_id, a.raw_department_name
+            FROM appearances a
+            WHERE a.person_id IS NOT NULL
+            UNION
+            SELECT DISTINCT pil.person_id, pm.project_id, pm.raw_department_name
+            FROM person_identity_links pil
+            JOIN person_mentions pm ON pm.id = pil.person_mention_id
+            WHERE pil.person_id IS NOT NULL
+              AND pil.link_status IN ('reviewed_match', 'auto_matched')
+        )
+        SELECT
+            lp.person_id,
+            ptl.topic_id,
+            pt.topic_year,
+            COUNT(DISTINCT lp.project_id) AS project_count,
+            COUNT(DISTINCT COALESCE(NULLIF(lp.raw_department_name, ''), '部署不明')) AS department_count,
+            SUM(CASE WHEN ptl.is_priority = 1 THEN 1 ELSE 0 END) AS priority_project_count,
+            AVG(ptl.confidence) AS avg_confidence,
+            MIN(COALESCE(NULLIF(p.published_at, ''), substr(p.fetched_at, 1, 10))) AS first_seen_at,
+            MAX(COALESCE(NULLIF(p.published_at, ''), substr(p.fetched_at, 1, 10))) AS last_seen_at
+        FROM linked_projects lp
+        JOIN projects p ON p.id = lp.project_id
+        JOIN project_topic_links ptl ON ptl.project_id = lp.project_id
+        JOIN policy_topics pt ON pt.id = ptl.topic_id
+        WHERE 1 = 1
+        {filter_sql}
+        GROUP BY lp.person_id, ptl.topic_id, pt.topic_year
+        """,
+        params,
+    ).fetchall()
+
+    inserted = 0
+    for row in rows:
+        project_count = int(row["project_count"] or 0)
+        department_count = int(row["department_count"] or 0)
+        priority_project_count = int(row["priority_project_count"] or 0)
+        avg_confidence = float(row["avg_confidence"] or 0)
+        first_seen_at = row["first_seen_at"] or ""
+        last_seen_at = row["last_seen_at"] or ""
+        first_date = parse_iso_date(first_seen_at)
+        last_date = parse_iso_date(last_seen_at)
+        span_years = 0.0
+        if first_date and last_date and last_date >= first_date:
+            span_years = (last_date - first_date).days / 365.0
+        involvement_score = project_count + department_count * 0.45 + avg_confidence * 0.8 + priority_project_count * 0.75
+        continuity_score = min(4.0, span_years * 1.4 + (1.0 if project_count >= 2 else 0.0))
+        visibility_score = min(4.5, avg_confidence * 1.8 + priority_project_count * 0.8 + project_count * 0.25)
+        spotlight_score = involvement_score + continuity_score + visibility_score
+        conn.execute(
+            """
+            INSERT INTO person_topic_rollups (
+                person_id, topic_id, topic_year, project_count, department_count, priority_project_count,
+                involvement_score, continuity_score, visibility_score, spotlight_score,
+                first_seen_at, last_seen_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(row["person_id"]),
+                int(row["topic_id"]),
+                int(row["topic_year"] or 0),
+                project_count,
+                department_count,
+                priority_project_count,
+                involvement_score,
+                continuity_score,
+                visibility_score,
+                spotlight_score,
+                first_seen_at,
+                last_seen_at,
+            ),
+        )
+        inserted += 1
+    return inserted
+
+
+def cleanup_orphan_project_inferred_topics(conn: sqlite3.Connection) -> int:
+    orphan_ids = [
+        int(row["id"])
+        for row in conn.execute(
+            """
+            SELECT pt.id
+            FROM policy_topics pt
+            LEFT JOIN project_topic_links ptl ON ptl.topic_id = pt.id
+            LEFT JOIN topic_source_mentions tsm ON tsm.topic_id = pt.id
+            LEFT JOIN person_topic_rollups ptr ON ptr.topic_id = pt.id
+            WHERE pt.origin_type = 'project_inferred'
+            GROUP BY pt.id
+            HAVING COUNT(DISTINCT ptl.id) = 0
+               AND COUNT(DISTINCT tsm.id) = 0
+               AND COUNT(DISTINCT ptr.id) = 0
+            """
+        ).fetchall()
+    ]
+    if orphan_ids:
+        conn.executemany("DELETE FROM policy_topics WHERE id = ?", [(topic_id,) for topic_id in orphan_ids])
+    return len(orphan_ids)
+
+
+def rebuild_policy_topics(db_path: Path | str = DB_PATH) -> dict[str, int]:
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        conn.execute("DELETE FROM project_topic_links")
+        conn.execute("DELETE FROM person_topic_rollups")
+        conn.execute("DELETE FROM policy_topics WHERE origin_type = 'project_inferred'")
+        links = refresh_project_topic_links(conn)
+        rollups = refresh_person_topic_rollups(conn)
+        removed = cleanup_orphan_project_inferred_topics(conn)
+        conn.commit()
+        return {
+            "project_topic_links": links,
+            "person_topic_rollups": rollups,
+            "topics_removed": removed,
+        }
+    finally:
+        conn.close()
+
+
+def split_topic_name_field(value: str) -> list[str]:
+    tokens = re.split(r"[|,、/／\n]+", value or "")
+    names: list[str] = []
+    for token in tokens:
+        candidate = normalize_text(token or "").strip()
+        if candidate and candidate not in names:
+            names.append(candidate)
+    return names
+
+
+def normalized_topic_name_set(value: str | list[str] | set[str] | tuple[str, ...]) -> set[str]:
+    if isinstance(value, str):
+        names = split_topic_name_field(value)
+    else:
+        names = [normalize_text(str(item or "")).strip() for item in value]
+    return {
+        normalize_topic_name(name)
+        for name in names
+        if is_valid_topic_name(name)
+    }
+
+
+def topic_token_set_from_names(names: set[str] | list[str] | tuple[str, ...]) -> set[str]:
+    tokens: set[str] = set()
+    for name in names:
+        normalized = normalize_text(name or "").strip()
+        if not is_valid_topic_name(normalized):
+            continue
+        tokens |= topic_tokens_for_matching(normalized)
+    return tokens
+
+
+def build_topic_year_map(rows: list[sqlite3.Row] | list[dict[str, Any]]) -> dict[str, set[int]]:
+    mapping: dict[str, set[int]] = {}
+    for row in rows:
+        payload = dict(row)
+        topic_name = normalize_topic_name(payload.get("name") or payload.get("topic_name") or "")
+        topic_year = int(payload.get("topic_year") or 0)
+        if not topic_name or topic_year <= 0:
+            continue
+        mapping.setdefault(topic_name, set()).add(topic_year)
+    return mapping
+
+
+def has_recent_topic_year_match(
+    mention_topic_names: set[str],
+    mention_year: int,
+    candidate_topic_years: dict[str, set[int]],
+    tolerance: int = 1,
+) -> bool:
+    if mention_year <= 0:
+        return False
+    for name in mention_topic_names:
+        for topic_year in candidate_topic_years.get(name, set()):
+            if abs(topic_year - mention_year) <= tolerance:
+                return True
+    return False
+
+
+def shared_topic_display_names(topic_field: str, candidate_topic_names: set[str]) -> list[str]:
+    shared: list[str] = []
+    seen: set[str] = set()
+    for name in split_topic_name_field(topic_field or ""):
+        normalized = normalize_topic_name(name)
+        if normalized and normalized in candidate_topic_names and name not in seen:
+            shared.append(name)
+            seen.add(name)
+    return shared
+
+
+def identity_match_labels(metrics: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    if metrics.get("contact_match"):
+        labels.append("連絡先一致")
+    if metrics.get("department_match"):
+        labels.append("部署一致")
+    elif metrics.get("top_unit_match"):
+        labels.append("部局一致")
+    if metrics.get("department_theme_match"):
+        labels.append("部署テーマ一致")
+    if metrics.get("project_theme_match"):
+        labels.append("企画テーマ一致")
+    if metrics.get("policy_topic_match"):
+        labels.append("テーマ継続")
+    if metrics.get("policy_topic_recent_match"):
+        labels.append("同年度テーマ")
+    if metrics.get("priority_policy_topic_match"):
+        labels.append("重点テーマ")
+    if metrics.get("transfer_match"):
+        labels.append("異動部署一致")
+    if metrics.get("transfer_recent_match"):
+        labels.append("異動時期一致")
+    return labels
+
+
+def slot_match_labels(metrics: dict[str, Any], slot_row: sqlite3.Row | dict[str, Any]) -> list[str]:
+    slot = dict(slot_row)
+    labels: list[str] = []
+    if metrics.get("exact_name_match"):
+        labels.append("フルネーム一致")
+    elif metrics.get("surname_bridge"):
+        labels.append("姓ブリッジ")
+    if metrics.get("department_exact"):
+        labels.append("部署一致")
+    elif metrics.get("department_overlap"):
+        labels.append("部署近似")
+    if metrics.get("department_theme_match"):
+        labels.append("部署テーマ一致")
+    if metrics.get("project_theme_match"):
+        labels.append("企画テーマ一致")
+    if metrics.get("policy_topic_match"):
+        labels.append("テーマ継続")
+    if metrics.get("policy_topic_recent_match"):
+        labels.append("同年度テーマ")
+    if metrics.get("priority_policy_topic_match"):
+        labels.append("重点テーマ")
+    if metrics.get("active_match"):
+        labels.append("在籍時期一致")
+    elif metrics.get("near_start") or metrics.get("near_end"):
+        labels.append("異動時期近接")
+    if slot.get("person_id"):
+        labels.append("既存人物あり")
+    return labels
+
+
+def import_policy_sources_csv(csv_path: Path | str, db_path: Path | str = DB_PATH) -> dict[str, int]:
+    init_db(db_path)
+    counts = {
+        "sources": 0,
+        "topics": 0,
+        "project_topic_links": 0,
+        "person_topic_rollups": 0,
+        "topics_removed": 0,
+    }
+    conn = get_connection(db_path)
+    try:
+        with Path(csv_path).open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            required = {"source_type", "title", "url", "published_at", "summary", "raw_text", "topic_names"}
+            missing = required - set(reader.fieldnames or [])
+            if missing:
+                raise ValueError(f"policy CSVに必要な列がありません: {', '.join(sorted(missing))}")
+
+            for row in reader:
+                source_id = upsert_policy_source(
+                    conn,
+                    (row.get("source_type") or "manual").strip() or "manual",
+                    (row.get("title") or "").strip(),
+                    (row.get("url") or "").strip(),
+                    (row.get("published_at") or "").strip(),
+                    (row.get("summary") or "").strip(),
+                    (row.get("raw_text") or "").strip(),
+                )
+                topic_year = extract_year_from_date_text(row.get("published_at") or row.get("title") or "")
+                topic_candidates = derive_policy_source_topic_candidates(
+                    row.get("title") or "",
+                    row.get("summary") or "",
+                    row.get("raw_text") or "",
+                    topic_names=split_topic_name_field(row.get("topic_names") or ""),
+                    topic_year=topic_year,
+                )
+                counts["sources"] += 1
+                counts["topics"] += replace_policy_source_topics(conn, source_id, topic_candidates)
+
+        counts["project_topic_links"] = refresh_project_topic_links(conn)
+        counts["person_topic_rollups"] = refresh_person_topic_rollups(conn)
+        counts["topics_removed"] = cleanup_orphan_project_inferred_topics(conn)
+        conn.commit()
+        return counts
+    finally:
+        conn.close()
+
+
+def fetch_policy_topic_index(
+    limit: int = 80,
+    db_path: Path | str = DB_PATH,
+) -> list[dict[str, Any]]:
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute(
+            """
+            WITH project_counts AS (
+                SELECT topic_id, COUNT(DISTINCT project_id) AS project_count
+                FROM project_topic_links
+                GROUP BY topic_id
+            ),
+            person_counts AS (
+                SELECT topic_id,
+                       COUNT(DISTINCT person_id) AS person_count,
+                       COALESCE(SUM(spotlight_score), 0) AS total_spotlight
+                FROM person_topic_rollups
+                GROUP BY topic_id
+            )
+            SELECT
+                pt.id,
+                pt.name,
+                pt.topic_year,
+                pt.origin_type,
+                pt.description,
+                pt.priority_weight,
+                COALESCE(pc.project_count, 0) AS project_count,
+                COALESCE(rc.person_count, 0) AS person_count,
+                COALESCE(rc.total_spotlight, 0) AS total_spotlight
+            FROM policy_topics pt
+            LEFT JOIN project_counts pc ON pc.topic_id = pt.id
+            LEFT JOIN person_counts rc ON rc.topic_id = pt.id
+            WHERE COALESCE(pc.project_count, 0) > 0 OR COALESCE(rc.person_count, 0) > 0
+            ORDER BY total_spotlight DESC, pt.priority_weight DESC, project_count DESC, pt.name ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        payload: list[dict[str, Any]] = []
+        for row in rows:
+            people = conn.execute(
+                """
+                SELECT pe.person_key, pe.display_name, ptr.spotlight_score
+                FROM person_topic_rollups ptr
+                JOIN people pe ON pe.id = ptr.person_id
+                WHERE ptr.topic_id = ?
+                ORDER BY ptr.spotlight_score DESC, ptr.project_count DESC, pe.display_name ASC
+                LIMIT 4
+                """,
+                (row["id"],),
+            ).fetchall()
+            projects = conn.execute(
+                """
+                SELECT p.id, p.title, p.published_at, ptl.is_priority
+                FROM project_topic_links ptl
+                JOIN projects p ON p.id = ptl.project_id
+                WHERE ptl.topic_id = ?
+                ORDER BY ptl.is_priority DESC, ptl.confidence DESC,
+                         COALESCE(NULLIF(p.published_at, ''), substr(p.fetched_at, 1, 10)) DESC
+                LIMIT 4
+                """,
+                (row["id"],),
+            ).fetchall()
+            payload.append(
+                {
+                    **dict(row),
+                    "people": [dict(item) for item in people],
+                    "projects": [dict(item) for item in projects],
+                }
+            )
+        return payload
+    finally:
+        conn.close()
+
+
 def fetch_person_identity_context(conn: sqlite3.Connection, person_id: int) -> dict[str, Any]:
     mention_rows = conn.execute(
         """
@@ -1480,6 +2487,20 @@ def fetch_person_identity_context(conn: sqlite3.Connection, person_id: int) -> d
         """,
         (person_id,),
     ).fetchall()
+    topic_rows = conn.execute(
+        """
+        SELECT
+            pt.name,
+            ptr.topic_year,
+            ptr.priority_project_count,
+            ptr.spotlight_score
+        FROM person_topic_rollups ptr
+        JOIN policy_topics pt ON pt.id = ptr.topic_id
+        WHERE ptr.person_id = ?
+        ORDER BY ptr.spotlight_score DESC, ptr.priority_project_count DESC, pt.name ASC
+        """,
+        (person_id,),
+    ).fetchall()
 
     emails: set[str] = set()
     phones: set[str] = set()
@@ -1487,6 +2508,9 @@ def fetch_person_identity_context(conn: sqlite3.Connection, person_id: int) -> d
     department_top_units: set[str] = set()
     department_theme_profiles: set[str] = set()
     project_theme_profiles: set[str] = set()
+    policy_topic_names: set[str] = set()
+    priority_policy_topic_names: set[str] = set()
+    policy_topic_tokens: set[str] = set()
     department_ids: set[int] = set()
     activity_dates: list[date] = []
 
@@ -1520,6 +2544,15 @@ def fetch_person_identity_context(conn: sqlite3.Connection, person_id: int) -> d
             department_theme_profiles.add(token)
         for token in department_theme_tokens(row["from_department_raw"] or ""):
             department_theme_profiles.add(token)
+    for row in topic_rows:
+        topic_name = normalize_text(row["name"] or "").strip()
+        if not is_valid_topic_name(topic_name):
+            continue
+        normalized = normalize_topic_name(topic_name)
+        policy_topic_names.add(normalized)
+        policy_topic_tokens |= topic_tokens_for_matching(topic_name)
+        if int(row["priority_project_count"] or 0) > 0:
+            priority_policy_topic_names.add(normalized)
 
     project_count = conn.execute(
         """
@@ -1546,6 +2579,10 @@ def fetch_person_identity_context(conn: sqlite3.Connection, person_id: int) -> d
         "department_top_units": department_top_units,
         "department_theme_profiles": department_theme_profiles,
         "project_theme_profiles": project_theme_profiles,
+        "policy_topic_names": policy_topic_names,
+        "priority_policy_topic_names": priority_policy_topic_names,
+        "policy_topic_tokens": policy_topic_tokens,
+        "policy_topic_years": build_topic_year_map(topic_rows),
         "department_ids": department_ids,
         "activity_dates": activity_dates,
         "transfer_events": [dict(row) for row in transfer_rows],
@@ -1572,6 +2609,12 @@ def score_person_identity_candidate(
         mention.get("project_title", "") or "",
         mention.get("project_summary", "") or "",
         mention.get("project_purpose", "") or "",
+    )
+    mention_policy_topic_names = normalized_topic_name_set(mention.get("policy_topic_names") or "")
+    mention_priority_topic_names = normalized_topic_name_set(mention.get("priority_policy_topic_names") or "")
+    mention_policy_topic_tokens = topic_token_set_from_names(mention_policy_topic_names)
+    mention_year = extract_year_from_date_text(
+        mention.get("project_published_at", "") or mention.get("published_at", "") or mention.get("project_fetched_at", "") or ""
     )
     mention_date = coalesce_row_date(
         mention.get("project_published_at", "") or "",
@@ -1625,6 +2668,30 @@ def score_person_identity_candidate(
         and not department_exact
         and not department_overlap
     )
+    policy_topic_match = bool(
+        mention_policy_topic_names
+        and (
+            bool(mention_policy_topic_names & context.get("policy_topic_names", set()))
+            or bool(mention_policy_topic_tokens & context.get("policy_topic_tokens", set()))
+        )
+    )
+    priority_policy_topic_match = bool(
+        mention_priority_topic_names
+        and context.get("priority_policy_topic_names")
+        and bool(mention_priority_topic_names & context["priority_policy_topic_names"])
+    )
+    policy_topic_recent_match = has_recent_topic_year_match(
+        mention_policy_topic_names,
+        mention_year,
+        context.get("policy_topic_years", {}),
+    )
+    policy_topic_conflict = bool(
+        mention_policy_topic_names
+        and context.get("policy_topic_names")
+        and not policy_topic_match
+        and not department_exact
+        and not department_overlap
+    )
     transfer_to_match = bool(
         mention_department_id
         and any(event.get("to_department_id") == mention_department_id for event in context["transfer_events"])
@@ -1671,6 +2738,16 @@ def score_person_identity_candidate(
         score += 0.07
     elif project_theme_conflict and mention.get("name_quality") == "surname_only":
         score -= 0.12
+    if policy_topic_match:
+        score += 0.12
+    elif policy_topic_conflict and mention.get("name_quality") == "surname_only":
+        score -= 0.18
+    elif policy_topic_conflict:
+        score -= 0.08
+    if policy_topic_recent_match:
+        score += 0.08
+    if priority_policy_topic_match:
+        score += 0.05
     if transfer_to_match:
         score += 0.20
     if transfer_recent_match:
@@ -1691,6 +2768,10 @@ def score_person_identity_candidate(
         "department_theme_conflict": department_theme_conflict,
         "project_theme_match": project_theme_match,
         "project_theme_conflict": project_theme_conflict,
+        "policy_topic_match": policy_topic_match,
+        "policy_topic_recent_match": policy_topic_recent_match,
+        "priority_policy_topic_match": priority_policy_topic_match,
+        "policy_topic_conflict": policy_topic_conflict,
         "transfer_match": transfer_to_match,
         "transfer_recent_match": transfer_recent_match,
         "project_count": context["project_count"],
@@ -2505,6 +3586,8 @@ def save_project_record(record: ProjectRecord, db_path: Path | str = DB_PATH) ->
         replace_project_appearance(conn, project_id, effective_record)
         refresh_transfer_links_for_project(conn, project_id)
         refresh_slot_candidates(conn, project_id)
+        refresh_project_topic_links(conn, [project_id])
+        refresh_person_topic_rollups(conn, linked_person_ids_for_project(conn, project_id))
         conn.commit()
         return project_id
     finally:
@@ -2598,6 +3681,32 @@ def fetch_project_detail(project_id: int, db_path: Path | str = DB_PATH) -> dict
         payload["resolved_appearance"] = resolve_public_appearance(conn, row, appearance)
         payload["related_projects"] = [dict(item) for item in related]
         payload["transfer_candidates"] = fetch_transfer_candidates_for_project(conn, row, appearance)
+        payload["topic_links"] = [
+            dict(item)
+            for item in conn.execute(
+                """
+                SELECT
+                    pt.id AS topic_id,
+                    pt.name,
+                    pt.topic_year,
+                    pt.origin_type,
+                    pt.description,
+                    ptl.confidence,
+                    ptl.matched_by,
+                    ptl.is_priority,
+                    COUNT(DISTINCT tsm.policy_source_id) AS source_count
+                FROM project_topic_links ptl
+                JOIN policy_topics pt ON pt.id = ptl.topic_id
+                LEFT JOIN topic_source_mentions tsm ON tsm.topic_id = pt.id
+                WHERE ptl.project_id = ?
+                GROUP BY pt.id, pt.name, pt.topic_year, pt.origin_type, pt.description,
+                         ptl.confidence, ptl.matched_by, ptl.is_priority
+                ORDER BY ptl.is_priority DESC, ptl.confidence DESC, pt.name ASC
+                LIMIT 8
+                """,
+                (project_id,),
+            ).fetchall()
+        ]
         if payload["appearance"] and not is_valid_person_name(payload["appearance"].get("raw_person_name", "")):
             payload["appearance"]["person_key"] = ""
             payload["related_projects"] = []
@@ -3056,6 +4165,29 @@ def fetch_network_snapshot(
             """,
             (project_limit,),
         ).fetchall()
+        project_topic_map: dict[int, list[sqlite3.Row]] = {}
+        project_ids = [int(row["id"]) for row in project_rows]
+        if project_ids:
+            placeholders = ", ".join("?" for _ in project_ids)
+            topic_rows = conn.execute(
+                f"""
+                SELECT
+                    ptl.project_id,
+                    pt.id AS topic_id,
+                    pt.name,
+                    pt.topic_year,
+                    pt.origin_type,
+                    ptl.confidence,
+                    ptl.is_priority
+                FROM project_topic_links ptl
+                JOIN policy_topics pt ON pt.id = ptl.topic_id
+                WHERE ptl.project_id IN ({placeholders})
+                ORDER BY ptl.project_id ASC, ptl.is_priority DESC, ptl.confidence DESC, pt.name ASC
+                """,
+                project_ids,
+            ).fetchall()
+            for topic_row in topic_rows:
+                project_topic_map.setdefault(int(topic_row["project_id"]), []).append(topic_row)
 
         node_map: dict[str, dict[str, Any]] = {}
         edge_map: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -3076,6 +4208,7 @@ def fetch_network_snapshot(
                     "project_ids": set(),
                     "department_ids": set(),
                     "person_ids": set(),
+                    "topic_ids": set(),
                 },
             )
             return cluster
@@ -3178,6 +4311,23 @@ def fetch_network_snapshot(
                 cluster["person_ids"].add(person_node_id)
                 ensure_edge(person_node_id, project_node_id, "person_project")
 
+            for topic_row in project_topic_map.get(project_id, [])[:3]:
+                topic_node_id = f"topic:{int(topic_row['topic_id'])}:{top_unit}"
+                topic_subtitle_parts = []
+                if topic_row["topic_year"]:
+                    topic_subtitle_parts.append(str(topic_row["topic_year"]))
+                if int(topic_row["is_priority"] or 0):
+                    topic_subtitle_parts.append("重点施策")
+                ensure_node(
+                    topic_node_id,
+                    label=topic_row["name"] or "",
+                    node_type="topic",
+                    group=top_unit,
+                    subtitle=" / ".join(topic_subtitle_parts),
+                )
+                cluster["topic_ids"].add(topic_node_id)
+                ensure_edge(topic_node_id, project_node_id, "topic_project")
+
         nodes: list[dict[str, Any]] = []
         for node in node_map.values():
             base_size = {
@@ -3185,12 +4335,14 @@ def fetch_network_snapshot(
                 "department": 18,
                 "person": 16,
                 "candidate_person": 13,
+                "topic": 14,
             }.get(node["type"], 12)
             growth = {
                 "project": min(node["weight"], 2),
                 "department": min(node["weight"] * 2, 18),
                 "person": min(node["weight"] * 2, 16),
                 "candidate_person": min(node["weight"] * 2, 12),
+                "topic": min(node["weight"] * 2, 14),
             }.get(node["type"], min(node["weight"], 6))
             node["size"] = base_size + growth
             nodes.append(node)
@@ -3208,11 +4360,12 @@ def fetch_network_snapshot(
                     "project_count": len(cluster["project_ids"]),
                     "department_count": len(cluster["department_ids"]),
                     "person_count": len(cluster["person_ids"]),
+                    "topic_count": len(cluster["topic_ids"]),
                 }
                 for cluster in cluster_map.values()
             ],
             key=lambda item: (
-                item["project_count"] + item["person_count"],
+                item["project_count"] + item["person_count"] + item["topic_count"],
                 item["department_count"],
                 item["top_unit"],
             ),
@@ -3321,6 +4474,7 @@ def fetch_network_snapshot(
                 "project_count": sum(1 for node in nodes if node["type"] == "project"),
                 "department_count": sum(1 for node in nodes if node["type"] == "department"),
                 "person_count": sum(1 for node in nodes if node["type"] in {"person", "candidate_person"}),
+                "topic_count": sum(1 for node in nodes if node["type"] == "topic"),
                 "verified_person_count": sum(1 for node in nodes if node["type"] == "person"),
                 "cluster_count": len(clusters),
                 "edge_count": len(edges),
@@ -3585,6 +4739,26 @@ def fetch_person_detail(person_key: str, db_path: Path | str = DB_PATH) -> dict[
             if (item["department_name"] or "").strip() and (item["department_name"] or "").strip() != "部署不明"
         }
         related_people = fetch_related_people_for_person(conn, int(person["id"]), own_project_ids, own_departments)
+        topic_rollups = conn.execute(
+            """
+            SELECT
+                ptr.*,
+                pt.name AS topic_name,
+                pt.origin_type,
+                pt.description
+            FROM person_topic_rollups ptr
+            JOIN policy_topics pt ON pt.id = ptr.topic_id
+            WHERE ptr.person_id = ?
+            ORDER BY ptr.spotlight_score DESC, ptr.priority_project_count DESC, ptr.project_count DESC, pt.name ASC
+            LIMIT 12
+            """,
+            (person["id"],),
+        ).fetchall()
+        topic_summary = {
+            "topic_count": len(topic_rollups),
+            "priority_topic_count": sum(1 for item in topic_rollups if int(item["priority_project_count"] or 0) > 0),
+            "focus_topic_names": [item["topic_name"] for item in topic_rollups[:5]],
+        }
 
         return {
             "person": dict(person),
@@ -3594,6 +4768,8 @@ def fetch_person_detail(person_key: str, db_path: Path | str = DB_PATH) -> dict[
             "transfer_history": [dict(item) for item in transfer_history],
             "movement_summary": movement_summary,
             "related_people": related_people,
+            "topic_rollups": [dict(item) for item in topic_rollups],
+            "topic_summary": topic_summary,
         }
     finally:
         conn.close()
@@ -4382,6 +5558,23 @@ def score_slot_candidate(
     slot_department_id = int(slot["department_id"]) if slot.get("department_id") else None
     mention_top_unit = resolve_department_hierarchy(mention_department).get("top_unit", "")
     slot_top_unit = resolve_department_hierarchy(slot_department).get("top_unit", "")
+    mention_policy_topic_names = normalized_topic_name_set(mention.get("policy_topic_names") or "")
+    mention_priority_topic_names = normalized_topic_name_set(mention.get("priority_policy_topic_names") or "")
+    slot_policy_topic_names = normalized_topic_name_set(slot.get("person_policy_topic_names") or "")
+    slot_priority_topic_names = normalized_topic_name_set(slot.get("person_priority_policy_topic_names") or "")
+    mention_year = extract_year_from_date_text(
+        mention.get("project_published_at", "") or mention.get("published_at", "") or mention.get("project_fetched_at", "") or ""
+    )
+    slot_topic_years: dict[str, set[int]] = {}
+    for item in split_topic_name_field(slot.get("person_policy_topic_years") or ""):
+        topic_name, _, year_text = item.partition("@")
+        normalized_name = normalize_topic_name(topic_name)
+        try:
+            topic_year = int(year_text)
+        except ValueError:
+            topic_year = 0
+        if normalized_name and topic_year > 0:
+            slot_topic_years.setdefault(normalized_name, set()).add(topic_year)
     theme_match = department_theme_overlap(mention_department, slot_department)
     project_theme_match = bool(
         project_theme_tokens(
@@ -4390,6 +5583,21 @@ def score_slot_candidate(
             mention.get("project_purpose", "") or "",
         )
         & department_theme_tokens(slot_department)
+    )
+    policy_topic_match = bool(
+        mention_policy_topic_names
+        and slot_policy_topic_names
+        and bool(mention_policy_topic_names & slot_policy_topic_names)
+    )
+    priority_policy_topic_match = bool(
+        mention_priority_topic_names
+        and slot_priority_topic_names
+        and bool(mention_priority_topic_names & slot_priority_topic_names)
+    )
+    policy_topic_recent_match = has_recent_topic_year_match(
+        mention_policy_topic_names,
+        mention_year,
+        slot_topic_years,
     )
     department_exact = bool(
         (mention_department_id and slot_department_id and mention_department_id == slot_department_id)
@@ -4434,6 +5642,15 @@ def score_slot_candidate(
     elif project_theme_match:
         score += 0.06
         reasons.append("project theme")
+    if policy_topic_match:
+        score += 0.13
+        reasons.append("policy topic")
+    if policy_topic_recent_match:
+        score += 0.08
+        reasons.append("policy topic recency")
+    if priority_policy_topic_match:
+        score += 0.04
+        reasons.append("priority topic")
 
     if active_match:
         score += 0.24
@@ -4457,6 +5674,8 @@ def score_slot_candidate(
         score -= 0.08
     if surname_bridge and not (department_exact or department_overlap or theme_match or project_theme_match):
         score -= 0.18
+    if surname_bridge and mention_policy_topic_names and slot_policy_topic_names and not policy_topic_match:
+        score -= 0.16
     if (
         surname_bridge
         and mention_top_unit
@@ -4486,6 +5705,9 @@ def score_slot_candidate(
         "department_overlap": department_overlap,
         "department_theme_match": theme_match,
         "project_theme_match": project_theme_match,
+        "policy_topic_match": policy_topic_match,
+        "policy_topic_recent_match": policy_topic_recent_match,
+        "priority_policy_topic_match": priority_policy_topic_match,
         "active_match": active_match,
         "near_start": near_start,
         "near_end": near_end,
@@ -4520,15 +5742,27 @@ def upsert_slot_candidate(
 
 def refresh_slot_candidates(conn: sqlite3.Connection, project_id: int | None = None) -> int:
     query = """
+        WITH project_topic_names AS (
+            SELECT
+                ptl.project_id,
+                GROUP_CONCAT(DISTINCT pt.name) AS policy_topic_names,
+                GROUP_CONCAT(DISTINCT CASE WHEN ptl.is_priority = 1 THEN pt.name END) AS priority_policy_topic_names
+            FROM project_topic_links ptl
+            JOIN policy_topics pt ON pt.id = ptl.topic_id
+            GROUP BY ptl.project_id
+        )
         SELECT
             pm.*,
             p.published_at AS project_published_at,
             p.fetched_at AS project_fetched_at,
             p.title AS project_title,
             p.summary AS project_summary,
-            p.purpose AS project_purpose
+            p.purpose AS project_purpose,
+            ptn.policy_topic_names,
+            ptn.priority_policy_topic_names
         FROM person_mentions pm
         JOIN projects p ON p.id = pm.project_id
+        LEFT JOIN project_topic_names ptn ON ptn.project_id = pm.project_id
         WHERE IFNULL(TRIM(pm.normalized_person_name), '') != ''
           AND IFNULL(TRIM(pm.raw_person_name), '') != ''
     """
@@ -4553,11 +5787,24 @@ def refresh_slot_candidates(conn: sqlite3.Connection, project_id: int | None = N
                 pe.display_name AS linked_person_name,
                 te.effective_date AS source_effective_date,
                 ts.title AS source_title,
-                ts.url AS source_url
+                ts.url AS source_url,
+                tp.person_policy_topic_names,
+                tp.person_priority_policy_topic_names,
+                tp.person_policy_topic_years
             FROM employee_slots es
             LEFT JOIN people pe ON pe.id = es.person_id
             LEFT JOIN transfer_events te ON te.id = es.source_transfer_event_id
             LEFT JOIN transfer_sources ts ON ts.id = te.transfer_source_id
+            LEFT JOIN (
+                SELECT
+                    ptr.person_id,
+                    GROUP_CONCAT(DISTINCT pt.name) AS person_policy_topic_names,
+                    GROUP_CONCAT(DISTINCT CASE WHEN ptr.priority_project_count > 0 THEN pt.name END) AS person_priority_policy_topic_names,
+                    GROUP_CONCAT(DISTINCT pt.name || '@' || ptr.topic_year) AS person_policy_topic_years
+                FROM person_topic_rollups ptr
+                JOIN policy_topics pt ON pt.id = ptr.topic_id
+                GROUP BY ptr.person_id
+            ) tp ON tp.person_id = es.person_id
             WHERE es.normalized_person_name = ?
                OR es.normalized_person_name LIKE ?
                OR ? LIKE es.normalized_person_name || '%'
@@ -4601,8 +5848,49 @@ def refresh_slot_candidates(conn: sqlite3.Connection, project_id: int | None = N
 
 
 def fetch_slot_candidates_for_mention(conn: sqlite3.Connection, mention_id: int, limit: int = 5) -> list[dict[str, Any]]:
+    mention = conn.execute(
+        """
+        WITH project_topic_names AS (
+            SELECT
+                ptl.project_id,
+                GROUP_CONCAT(DISTINCT pt.name) AS policy_topic_names,
+                GROUP_CONCAT(DISTINCT CASE WHEN ptl.is_priority = 1 THEN pt.name END) AS priority_policy_topic_names
+            FROM project_topic_links ptl
+            JOIN policy_topics pt ON pt.id = ptl.topic_id
+            GROUP BY ptl.project_id
+        )
+        SELECT
+            pm.*,
+            p.published_at AS project_published_at,
+            p.fetched_at AS project_fetched_at,
+            p.title AS project_title,
+            p.summary AS project_summary,
+            p.purpose AS project_purpose,
+            ptn.policy_topic_names,
+            ptn.priority_policy_topic_names
+        FROM person_mentions pm
+        JOIN projects p ON p.id = pm.project_id
+        LEFT JOIN project_topic_names ptn ON ptn.project_id = pm.project_id
+        WHERE pm.id = ?
+        """,
+        (mention_id,),
+    ).fetchone()
+    if not mention:
+        return []
+    mention_payload = dict(mention)
+
     rows = conn.execute(
         """
+        WITH person_topic_names AS (
+            SELECT
+                ptr.person_id,
+                GROUP_CONCAT(DISTINCT pt.name) AS person_policy_topic_names,
+                GROUP_CONCAT(DISTINCT CASE WHEN ptr.priority_project_count > 0 THEN pt.name END) AS person_priority_policy_topic_names,
+                GROUP_CONCAT(DISTINCT pt.name || '@' || ptr.topic_year) AS person_policy_topic_years
+            FROM person_topic_rollups ptr
+            JOIN policy_topics pt ON pt.id = ptr.topic_id
+            GROUP BY ptr.person_id
+        )
         SELECT
             sc.candidate_score,
             sc.matched_by,
@@ -4619,19 +5907,40 @@ def fetch_slot_candidates_for_mention(conn: sqlite3.Connection, mention_id: int,
             pe.display_name AS linked_person_name,
             te.effective_date AS source_effective_date,
             ts.title AS source_title,
-            ts.url AS source_url
+            ts.url AS source_url,
+            ptn.person_policy_topic_names,
+            ptn.person_priority_policy_topic_names,
+            ptn.person_policy_topic_years
         FROM slot_candidates sc
         JOIN employee_slots es ON es.id = sc.employee_slot_id
         LEFT JOIN people pe ON pe.id = es.person_id
         LEFT JOIN transfer_events te ON te.id = es.source_transfer_event_id
         LEFT JOIN transfer_sources ts ON ts.id = te.transfer_source_id
+        LEFT JOIN person_topic_names ptn ON ptn.person_id = es.person_id
         WHERE sc.person_mention_id = ?
         ORDER BY sc.candidate_score DESC, COALESCE(NULLIF(es.active_from, ''), '0000-00-00') DESC, es.id DESC
         LIMIT ?
         """,
         (mention_id, limit),
     ).fetchall()
-    return [dict(row) for row in rows]
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        metrics = score_slot_candidate(mention, row)
+        item = dict(row)
+        item["match_labels"] = slot_match_labels(metrics, row)
+        item["shared_policy_topics"] = shared_topic_display_names(
+            mention_payload.get("policy_topic_names") or "",
+            normalized_topic_name_set(item.get("person_policy_topic_names") or ""),
+        )
+        item["shared_priority_topics"] = shared_topic_display_names(
+            mention_payload.get("priority_policy_topic_names") or "",
+            normalized_topic_name_set(item.get("person_priority_policy_topic_names") or ""),
+        )
+        item["policy_topic_match"] = metrics.get("policy_topic_match", False)
+        item["policy_topic_recent_match"] = metrics.get("policy_topic_recent_match", False)
+        item["priority_policy_topic_match"] = metrics.get("priority_policy_topic_match", False)
+        payload.append(item)
+    return payload
 
 
 def slot_timeline_transition_bonus(
@@ -4961,15 +6270,34 @@ def fetch_pending_reviews(limit: int = 100) -> list[sqlite3.Row]:
 def fetch_identity_candidates_for_mention(conn: sqlite3.Connection, mention_id: int, limit: int = 10) -> list[dict[str, Any]]:
     mention = conn.execute(
         """
-        SELECT pm.*, p.published_at AS project_published_at, p.fetched_at AS project_fetched_at
+        WITH project_topic_names AS (
+            SELECT
+                ptl.project_id,
+                GROUP_CONCAT(DISTINCT pt.name) AS policy_topic_names,
+                GROUP_CONCAT(DISTINCT CASE WHEN ptl.is_priority = 1 THEN pt.name END) AS priority_policy_topic_names
+            FROM project_topic_links ptl
+            JOIN policy_topics pt ON pt.id = ptl.topic_id
+            GROUP BY ptl.project_id
+        )
+        SELECT
+            pm.*,
+            p.published_at AS project_published_at,
+            p.fetched_at AS project_fetched_at,
+            p.title AS project_title,
+            p.summary AS project_summary,
+            p.purpose AS project_purpose,
+            ptn.policy_topic_names,
+            ptn.priority_policy_topic_names
         FROM person_mentions pm
         JOIN projects p ON p.id = pm.project_id
+        LEFT JOIN project_topic_names ptn ON ptn.project_id = pm.project_id
         WHERE pm.id = ?
         """,
         (mention_id,),
     ).fetchone()
     if not mention or not (mention["normalized_person_name"] or "").strip():
         return []
+    mention_payload = dict(mention)
 
     people = conn.execute(
         """
@@ -4994,14 +6322,29 @@ def fetch_identity_candidates_for_mention(conn: sqlite3.Connection, mention_id: 
             continue
         context = fetch_person_identity_context(conn, int(person["id"]))
         metrics = score_person_identity_candidate(mention, person, context)
+        match_labels = identity_match_labels(metrics)
         payload.append(
             {
                 **dict(person),
                 "candidate_score": metrics["score"],
                 "contact_match": metrics["contact_match"],
                 "department_match": metrics["department_match"],
+                "department_theme_match": metrics["department_theme_match"],
+                "project_theme_match": metrics["project_theme_match"],
+                "policy_topic_match": metrics["policy_topic_match"],
+                "policy_topic_recent_match": metrics["policy_topic_recent_match"],
+                "priority_policy_topic_match": metrics["priority_policy_topic_match"],
                 "transfer_match": metrics["transfer_match"],
                 "transfer_recent_match": metrics["transfer_recent_match"],
+                "match_labels": match_labels,
+                "shared_policy_topics": shared_topic_display_names(
+                    mention_payload.get("policy_topic_names") or "",
+                    context.get("policy_topic_names", set()),
+                ),
+                "shared_priority_topics": shared_topic_display_names(
+                    mention_payload.get("priority_policy_topic_names") or "",
+                    context.get("priority_policy_topic_names", set()),
+                ),
             }
         )
     payload.sort(
@@ -5009,6 +6352,8 @@ def fetch_identity_candidates_for_mention(conn: sqlite3.Connection, mention_id: 
             item["candidate_score"],
             1 if item["transfer_recent_match"] else 0,
             1 if item["transfer_match"] else 0,
+            1 if item["policy_topic_recent_match"] else 0,
+            1 if item["policy_topic_match"] else 0,
             1 if item["contact_match"] else 0,
             item["project_count"],
             item["display_name"],
@@ -5023,12 +6368,23 @@ def fetch_pending_identity_reviews(limit: int = 100, db_path: Path | str = DB_PA
     try:
         rows = conn.execute(
             """
+            WITH project_topic_names AS (
+                SELECT
+                    ptl.project_id,
+                    GROUP_CONCAT(DISTINCT pt.name) AS policy_topic_names,
+                    GROUP_CONCAT(DISTINCT CASE WHEN ptl.is_priority = 1 THEN pt.name END) AS priority_policy_topic_names
+                FROM project_topic_links ptl
+                JOIN policy_topics pt ON pt.id = ptl.topic_id
+                GROUP BY ptl.project_id
+            )
             SELECT
                 pm.*,
                 p.title,
                 p.url,
                 p.published_at,
                 p.source_type,
+                ptn.policy_topic_names,
+                ptn.priority_policy_topic_names,
                 pil.person_id,
                 pil.link_status,
                 pil.confidence,
@@ -5037,6 +6393,7 @@ def fetch_pending_identity_reviews(limit: int = 100, db_path: Path | str = DB_PA
                 pe.person_key AS linked_person_key
             FROM person_mentions pm
             JOIN projects p ON p.id = pm.project_id
+            LEFT JOIN project_topic_names ptn ON ptn.project_id = pm.project_id
             LEFT JOIN person_identity_links pil ON pil.person_mention_id = pm.id
             LEFT JOIN people pe ON pe.id = pil.person_id
             WHERE IFNULL(TRIM(pm.raw_person_name), '') != ''
@@ -5057,6 +6414,9 @@ def fetch_pending_identity_reviews(limit: int = 100, db_path: Path | str = DB_PA
         payload: list[dict[str, Any]] = []
         for row in rows:
             item = dict(row)
+            item["policy_topics"] = split_topic_name_field(
+                item.get("priority_policy_topic_names") or item.get("policy_topic_names") or ""
+            )
             item["candidates"] = fetch_identity_candidates_for_mention(conn, int(row["id"]))
             slot_candidates = fetch_slot_candidates_for_mention(conn, int(row["id"]))
             recommendation = recommendations.get(int(row["id"]))

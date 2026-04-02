@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 
 BASE_URL = "https://www.pref.saga.lg.jp"
+REPO_ROOT = Path(__file__).resolve().parent
+BUNDLED_DATA_DIR = REPO_ROOT / "data"
 
 PROPOSAL_KEYWORDS = [
     "プロポーザル",
@@ -75,14 +77,58 @@ PRESS_RELEASE_DEPARTMENT_KEYWORDS = [
     "談話",
 ]
 
-DATA_DIR = Path(os.getenv("SAGA_MEDIA_DATA_DIR", Path(__file__).resolve().parent / "data"))
+def resolve_runtime_input_path(
+    env_name: str,
+    runtime_default: Path,
+    bundled_default: Path,
+) -> Path:
+    explicit = os.getenv(env_name)
+    if explicit:
+        return Path(explicit)
+    if runtime_default.exists():
+        return runtime_default
+    return bundled_default
+
+
+DATA_DIR = Path(os.getenv("SAGA_MEDIA_DATA_DIR", BUNDLED_DATA_DIR))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+DEFAULT_EXPORT_DIR = REPO_ROOT / "exports" if DATA_DIR == BUNDLED_DATA_DIR else DATA_DIR / "exports"
+EXPORT_DIR = Path(os.getenv("SAGA_MEDIA_EXPORT_DIR", DEFAULT_EXPORT_DIR))
+EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+TRANSFER_DATA_DIR = Path(os.getenv("SAGA_MEDIA_TRANSFERS_DIR", DATA_DIR / "transfers"))
+TRANSFER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+POLICY_SOURCE_DATA_DIR = Path(os.getenv("SAGA_MEDIA_POLICY_SOURCES_DIR", DATA_DIR / "policy_sources"))
+POLICY_SOURCE_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_PATH = DATA_DIR / "saga_media.db"
 CRAWLED_URL_LOG_PATH = DATA_DIR / "crawled_urls.txt"
-LIST_SOURCES_CSV_PATH = Path(os.getenv("SAGA_MEDIA_SOURCES_CSV_PATH", DATA_DIR / "list_sources.csv"))
-DEPARTMENT_HIERARCHY_CSV_PATH = Path(
-    os.getenv("SAGA_MEDIA_DEPARTMENT_HIERARCHY_CSV_PATH", DATA_DIR / "department_hierarchy.csv")
+LIST_SOURCES_CSV_PATH = resolve_runtime_input_path(
+    "SAGA_MEDIA_SOURCES_CSV_PATH",
+    DATA_DIR / "list_sources.csv",
+    BUNDLED_DATA_DIR / "list_sources.csv",
+)
+DEPARTMENT_HIERARCHY_CSV_PATH = resolve_runtime_input_path(
+    "SAGA_MEDIA_DEPARTMENT_HIERARCHY_CSV_PATH",
+    DATA_DIR / "department_hierarchy.csv",
+    BUNDLED_DATA_DIR / "department_hierarchy.csv",
+)
+TRANSFER_SOURCE_INDEX_CSV_PATH = resolve_runtime_input_path(
+    "SAGA_MEDIA_TRANSFER_SOURCE_INDEX_CSV_PATH",
+    TRANSFER_DATA_DIR / "source_index.csv",
+    BUNDLED_DATA_DIR / "transfers" / "source_index.csv",
+)
+TRANSFER_TEMPLATE_CSV_PATH = resolve_runtime_input_path(
+    "SAGA_MEDIA_TRANSFER_TEMPLATE_CSV_PATH",
+    TRANSFER_DATA_DIR / "transfer_template.csv",
+    BUNDLED_DATA_DIR / "transfers" / "transfer_template.csv",
+)
+POLICY_SOURCE_TEMPLATE_CSV_PATH = resolve_runtime_input_path(
+    "SAGA_MEDIA_POLICY_SOURCE_TEMPLATE_CSV_PATH",
+    POLICY_SOURCE_DATA_DIR / "policy_source_template.csv",
+    BUNDLED_DATA_DIR / "policy_sources" / "policy_source_template.csv",
 )
 
 DISCORD_WEBHOOK_URL = os.getenv("PROPOSAL_WEBHOOK_URL", os.getenv("DISCORD_WEBHOOK_URL", ""))

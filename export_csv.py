@@ -1,12 +1,8 @@
 import csv
 import sqlite3
 from collections import defaultdict
-from pathlib import Path
 
-from config import DB_PATH
-
-EXPORT_DIR = Path("exports")
-EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+from config import DB_PATH, EXPORT_DIR
 
 
 def export_grouped_csv() -> None:

@@ -131,7 +131,8 @@
 
 佐賀県公式サイト上の `kiji` 記事ページを主対象とする。
 
-取得元一覧ページは [data/list_sources.csv](/Users/harrn/Desktop/saga_staff_media/data/list_sources.csv) で管理する。
+取得元一覧ページは、runtime データ置き場の `list_sources.csv` で管理する。  
+既定では repo 内の [data/list_sources.csv](/Users/harrn/Desktop/saga_staff_media/data/list_sources.csv) を使うが、`SAGA_MEDIA_DATA_DIR` を設定すると外部ディレクトリ側の `list_sources.csv` が優先される。
 
 CSVの列:
 
@@ -405,7 +406,7 @@ CSVの列:
 ### 11-2. データベース
 
 - [database.py](/Users/harrn/Desktop/saga_staff_media/database.py)
-- [data/saga_media.db](/Users/harrn/Desktop/saga_staff_media/data/saga_media.db)
+- runtime の `saga_media.db`
 
 役割:
 
@@ -444,8 +445,8 @@ CSVの列:
 
 - 複数担当者の保持
 - 同姓同名の厳密な人物統合
-- テーマタグ自動付与
-- ネットワーク可視化
+- 記者会見や重点施策資料の継続投入
+- 重点テーマと人物同定のレビューUI強化
 - 取材記事管理
 - 編集部仮説の管理画面
 
@@ -459,6 +460,35 @@ pip install -r requirements.txt
 ```
 
 仮想環境を毎回 `activate` しなくても、以下のように `./.venv/bin/python` を直接使えば実行できる。
+
+### 13-1. 外部データ置き場
+
+repo とは別にデータを持ちたい場合は、`SAGA_MEDIA_DATA_DIR` を設定する。  
+このディレクトリに次が作られる。
+
+- `saga_media.db`
+- `crawled_urls.txt`
+- `exports/`
+- `transfers/`
+- `policy_sources/`
+- `list_sources.csv`
+- `department_hierarchy.csv`
+
+初期化は次で行える。
+
+```bash
+./.venv/bin/python setup_runtime.py --runtime-dir /path/to/saga_staff_media_data --copy-transfers --copy-policy-sources
+```
+
+### 13-2. Windows での初回セットアップ
+
+Windows では [windows/README.md](/Users/harrn/Desktop/saga_staff_media/windows/README.md) の `.bat` を使うと早い。
+
+1. `windows/setup_windows.bat`
+2. `windows/run_app.bat`
+3. 必要に応じて `windows/ingest.bat`
+
+既定の外部データ置き場は `%USERPROFILE%\saga_staff_media_data`。
 
 ## 14. 基本の実行フロー
 
@@ -487,8 +517,10 @@ Webを起動する:
 ブラウザでは少なくとも次を確認するとよい。
 
 - `http://127.0.0.1:8000/`
+- `http://127.0.0.1:8000/topics`
 - `http://127.0.0.1:8000/people`
 - `http://127.0.0.1:8000/directory`
+- `http://127.0.0.1:8000/network`
 - `http://127.0.0.1:8000/admin/identities`
 
 ## 15. 取り込みのバリエーション
@@ -543,19 +575,31 @@ DISCORD_WEBHOOK_URL=... ./.venv/bin/python ingest.py --notify
 年ごとのCSVをまとめて取り込むには:
 
 ```bash
-./.venv/bin/python import_transfer_directory.py --dir data/transfers
+./.venv/bin/python import_transfer_directory.py
 ```
 
 取り込み前に年次CSVを検証するには:
 
 ```bash
-./.venv/bin/python validate_transfer_csv.py --dir data/transfers
+./.venv/bin/python validate_transfer_csv.py
 ```
 
 佐賀新聞の人事異動特集から年次CSVを自動生成するには:
 
 ```bash
 ./.venv/bin/python build_newspaper_transfer_csv.py 2025
+```
+
+重点施策ソースCSVを取り込むには:
+
+```bash
+./.venv/bin/python import_policy_sources.py data/policy_sources/policy_source_template.csv
+```
+
+既存企画から `重点テーマ -> project_topic_links -> person_topic_rollups` を再構築するには:
+
+```bash
+./.venv/bin/python rebuild_policy_topics.py
 ```
 
 ## 17. 年次の人事異動更新フロー
@@ -571,20 +615,37 @@ DISCORD_WEBHOOK_URL=... ./.venv/bin/python ingest.py --notify
 
 ```bash
 ./.venv/bin/python build_newspaper_transfer_csv.py 2025
-./.venv/bin/python validate_transfer_csv.py --dir data/transfers
-./.venv/bin/python import_transfer_directory.py --dir data/transfers
+./.venv/bin/python validate_transfer_csv.py
+./.venv/bin/python import_transfer_directory.py
 ./.venv/bin/python app.py
 ```
 
-## 18. 当面の優先開発
+## 18. 重点テーマの更新フロー
+
+知事会見、重点事業資料、当初予算資料などを人物・企画・ネットワークに反映したいときは、次の順に実行する。
+
+1. [data/policy_sources/policy_source_template.csv](/Users/harrn/Desktop/saga_staff_media/data/policy_sources/policy_source_template.csv) 形式でCSVを作る
+2. `policy_sources` / `policy_topics` に取り込む
+3. `project_topic_links` と `person_topic_rollups` を再構築する
+4. `/topics` `/people/<person_key>` `/network` を確認する
+
+例:
+
+```bash
+./.venv/bin/python import_policy_sources.py data/policy_sources/policy_source_template.csv
+./.venv/bin/python rebuild_policy_topics.py
+./.venv/bin/python app.py
+```
+
+## 19. 当面の優先開発
 
 1. 人物統合の精度を上げる
-2. 人物ページにテーマタグを導入する
-3. `person -> projects -> related people` の関連表示を追加する
+2. 同姓候補の review UI を強くする
+3. `topic -> person -> department` の導線を強くする
 4. 編集部仮説を保存する仕組みを追加する
 5. 取材記事テーブルと画面を追加する
 
-## 19. 人物同定と異動履歴の設計
+## 20. 人物同定と異動履歴の設計
 
 人物同定、複数担当者、異動履歴の設計方針は
 [docs/person_identity_and_transfer_design.md](/Users/harrn/Desktop/saga_staff_media/docs/person_identity_and_transfer_design.md)

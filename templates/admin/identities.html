@@ -16,6 +16,14 @@
         <div><strong>部署:</strong> {{ review.raw_department_name or '不明' }}</div>
         <div><strong>連絡先:</strong> {{ review.contact_email or 'なし' }}{% if review.contact_phone %} / {{ review.contact_phone }}{% endif %}</div>
         <div><strong>品質:</strong> {{ review.name_quality }} / confidence {{ '%.2f'|format(review.source_confidence or 0) }}</div>
+        {% if review.policy_topics %}
+        <div style="margin-top: 0.45rem;">
+          <strong>企画テーマ:</strong>
+          {% for topic in review.policy_topics %}
+          <span style="display: inline-block; margin: 0.15rem 0.3rem 0 0; padding: 0.15rem 0.45rem; background: #eef4ff; color: #2643a2; border-radius: 999px; font-size: 0.82em;">{{ topic }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
         {% if review.linked_person_name %}
         <div><strong>現在リンク:</strong> {{ review.linked_person_name }} ({{ review.link_status }})</div>
         {% elif review.link_status %}
@@ -60,13 +68,40 @@
       {% endif %}
 
       {% if review.candidates %}
-      <div style="margin-top: 0.75rem; font-size: 0.9em; color: #666;">
-        候補:
-        {% for candidate in review.candidates %}
-        <span style="display: inline-block; margin-right: 0.75rem;">{{ candidate.display_name }} ({{ candidate.project_count }}件)</span>
-        {% endfor %}
+      <div style="margin-top: 1rem;">
+        <div style="font-weight: 600; margin-bottom: 0.45rem;">既存人物候補</div>
+        <div style="display: grid; gap: 0.6rem;">
+          {% for candidate in review.candidates %}
+          <div style="padding: 0.75rem; border: 1px solid #e5e7eb; border-radius: 6px; background: #f9fafb;">
+            <div style="display: flex; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;">
+              <div>
+                <strong>{{ candidate.display_name }}</strong>
+                <span style="color: #666;">/ {{ candidate.project_count }}件 / score {{ '%.2f'|format(candidate.candidate_score) }}</span>
+              </div>
+              <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
+                {% for label in candidate.match_labels or [] %}
+                <span style="display: inline-block; padding: 0.12rem 0.42rem; border-radius: 999px; background: #edf2f7; color: #2d3748; font-size: 0.8em;">{{ label }}</span>
+                {% endfor %}
+              </div>
+            </div>
+            {% if candidate.shared_priority_topics %}
+            <div style="font-size: 0.88em; color: #8a6d3b; margin-top: 0.35rem;">
+              重点テーマ一致: {{ candidate.shared_priority_topics|join(' / ') }}
+            </div>
+            {% endif %}
+            {% if candidate.shared_policy_topics %}
+            <div style="font-size: 0.88em; color: #4a5568; margin-top: 0.25rem;">
+              継続テーマ: {{ candidate.shared_policy_topics|join(' / ') }}
+            </div>
+            {% endif %}
+            {% if candidate.departments %}
+            <div style="font-size: 0.85em; color: #666; margin-top: 0.25rem;">既知部署: {{ candidate.departments }}</div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
       </div>
-        {% else %}
+      {% else %}
       <div style="margin-top: 0.75rem; font-size: 0.9em; color: #666;">一致候補はまだありません。</div>
       {% endif %}
 
@@ -92,6 +127,13 @@
             {% endif %}
             / {{ slot.raw_department_name or '部署不明' }}
             {% if slot.title_raw %} / {{ slot.title_raw }}{% endif %}
+            {% if slot.match_labels %}
+            <div style="margin-top: 0.3rem; display: flex; gap: 0.35rem; flex-wrap: wrap;">
+              {% for label in slot.match_labels %}
+              <span style="display: inline-block; padding: 0.1rem 0.4rem; border-radius: 999px; background: #fff; color: #8a6d3b; border: 1px solid #ead7a4; font-size: 0.8em;">{{ label }}</span>
+              {% endfor %}
+            </div>
+            {% endif %}
             <div style="font-size: 0.9em; color: #666;">
               {{ slot.active_from or '開始日不明' }}{% if slot.active_to %} 〜 {{ slot.active_to }}{% else %} 〜 継続中候補{% endif %}
               {% if slot.linked_person_name %}
@@ -106,6 +148,12 @@
               / {% if slot.source_url %}<a href="{{ slot.source_url }}" target="_blank">{{ slot.source_title }}</a>{% else %}{{ slot.source_title }}{% endif %}
               {% endif %}
             </div>
+            {% if slot.shared_priority_topics %}
+            <div style="font-size: 0.85em; color: #8a6d3b; margin-top: 0.2rem;">重点テーマ一致: {{ slot.shared_priority_topics|join(' / ') }}</div>
+            {% endif %}
+            {% if slot.shared_policy_topics %}
+            <div style="font-size: 0.85em; color: #7c6f57; margin-top: 0.15rem;">継続テーマ: {{ slot.shared_policy_topics|join(' / ') }}</div>
+            {% endif %}
             {% if slot.notes %}
             <div style="font-size: 0.85em; color: #8a6d3b;">{{ slot.notes }}</div>
             {% endif %}

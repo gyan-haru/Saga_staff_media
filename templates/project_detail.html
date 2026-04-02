@@ -56,6 +56,30 @@
   </section>
   {% endif %}
 
+  {% if project['topic_links'] %}
+  <section>
+    <h3>重点テーマ</h3>
+    <div class="cards">
+      {% for item in project['topic_links'] %}
+      <article class="card">
+        <div class="meta">
+          {% if item['topic_year'] %}{{ item['topic_year'] }} / {% endif %}
+          {{ '重点施策' if item['is_priority'] else '推定テーマ' }}
+        </div>
+        <h4>{{ item['name'] }}</h4>
+        {% if item['description'] %}
+        <p>{{ item['description'] }}</p>
+        {% endif %}
+        <div class="small">confidence {{ '%.2f'|format(item['confidence'] or 0) }} / {{ item['matched_by'] }}</div>
+        {% if item['source_count'] %}
+        <div class="small">政策ソース {{ item['source_count'] }}件</div>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   {% if project['appearance'] and project['appearance']['extracted_section'] %}
   <section>
     <h3>担当抽出に使った断片</h3>

@@ -1,0 +1,53 @@
+{% extends 'layout.html' %}
+{% block title %}重点テーマ{% endblock %}
+{% block content %}
+<section class="detail-card">
+  <h2>重点テーマ一覧</h2>
+  <p class="small">
+    企画本文、部署テーマ、人事異動の継続関与、記者会見や重点事業資料から組み立てたテーマ一覧です。
+    佐賀県がどの領域を強めているか、誰がそこに継続して関わっているかを見る入口として使えます。
+  </p>
+</section>
+
+{% if topics %}
+<section class="detail-card">
+  <div class="section-head">
+    <h3>テーマプロファイル</h3>
+    <div class="small">{{ topics|length }}テーマ</div>
+  </div>
+  <div class="cards">
+    {% for topic in topics %}
+    <article class="card">
+      <div class="meta">
+        {% if topic['topic_year'] %}{{ topic['topic_year'] }} / {% endif %}
+        {{ '政策ソースあり' if topic['origin_type'] == 'policy_source' else '企画推定' }}
+      </div>
+      <h4>{{ topic['name'] }}</h4>
+      {% if topic['description'] %}
+      <p>{{ topic['description'] }}</p>
+      {% endif %}
+      <div class="small">企画 {{ topic['project_count'] }}件 / 人物 {{ topic['person_count'] }}人</div>
+      <div class="small">関与総量 {{ '%.1f'|format(topic['total_spotlight'] or 0) }}</div>
+      {% if topic['people'] %}
+      <div class="small" style="margin-top: 0.45rem;">
+        よく見える人:
+        {% for person in topic['people'] %}
+        {% if loop.index > 1 %} / {% endif %}
+        <a href="{{ url_for('person_detail', person_key=person['person_key']) }}">{{ person['display_name'] }}</a>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if topic['projects'] %}
+      <div class="small" style="margin-top: 0.45rem;">
+        関連企画:
+        {% for project in topic['projects'] %}
+        <div><a href="{{ url_for('project_detail', project_id=project['id']) }}">{{ project['title'] }}</a></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

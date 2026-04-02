@@ -69,6 +69,7 @@ pre { white-space: pre-wrap; background: #faf8f4; border: 1px solid var(--line);
   border-style: dashed;
   border-color: #1f2328;
 }
+.legend-topic { background: #f5d97b; border-color: #9b6a00; }
 .network-stage {
   position: relative;
   margin-top: 20px;
@@ -120,7 +121,8 @@ pre { white-space: pre-wrap; background: #faf8f4; border: 1px solid var(--line);
 .network-node-project circle { filter: drop-shadow(0 4px 10px rgba(53, 102, 200, 0.12)); }
 .network-node-department circle,
 .network-node-person circle,
-.network-node-candidate_person circle {
+.network-node-candidate_person circle,
+.network-node-topic circle {
   filter: drop-shadow(0 5px 12px rgba(31, 35, 40, 0.12));
 }
 .network-label {

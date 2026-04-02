@@ -13,6 +13,7 @@ from database import (
     fetch_pending_reviews,
     fetch_people,
     fetch_person_detail,
+    fetch_policy_topic_index,
     fetch_project_detail,
     fetch_projects,
     fetch_staff_roster,
@@ -96,6 +97,12 @@ def network():
     selected_top_unit = (request.args.get("top_unit") or "").strip() or None
     payload = fetch_network_snapshot(top_unit_filter=selected_top_unit)
     return render_template("network.html", **payload)
+
+
+@app.route("/topics")
+def topics():
+    rows = fetch_policy_topic_index()
+    return render_template("topics.html", topics=rows)
 
 
 @app.route("/people/<person_key>")

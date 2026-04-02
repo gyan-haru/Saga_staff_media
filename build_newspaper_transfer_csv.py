@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+from config import TRANSFER_DATA_DIR, TRANSFER_SOURCE_INDEX_CSV_PATH
 from extractor import (
     clean_department_name,
     clean_person_name,
@@ -476,18 +477,18 @@ def main() -> int:
     parser.add_argument("year", type=int, help="対象年")
     parser.add_argument(
         "--source-index",
-        default="data/transfers/source_index.csv",
+        default=str(TRANSFER_SOURCE_INDEX_CSV_PATH),
         help="人事異動ソース一覧CSV",
     )
     parser.add_argument(
         "--output",
         default="",
-        help="出力先CSV。未指定なら data/transfers/newspaper_<year>.csv",
+        help="出力先CSV。未指定なら runtime の transfers/newspaper_<year>.csv",
     )
     args = parser.parse_args()
 
     source_index_path = Path(args.source_index)
-    output_path = Path(args.output) if args.output else Path(f"data/transfers/newspaper_{args.year}.csv")
+    output_path = Path(args.output) if args.output else TRANSFER_DATA_DIR / f"newspaper_{args.year}.csv"
 
     rows = build_rows_for_year(args.year, source_index_path)
     write_rows(output_path, rows)

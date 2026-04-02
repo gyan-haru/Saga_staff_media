@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from config import TRANSFER_DATA_DIR
 from database import DB_PATH, import_transfers_csv
 
 
@@ -17,10 +18,10 @@ def list_transfer_csvs(directory: Path) -> list[Path]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="data/transfers 配下の年次CSVをまとめて取り込む")
+    parser = argparse.ArgumentParser(description="人事異動CSVディレクトリ配下の年次CSVをまとめて取り込む")
     parser.add_argument(
         "--dir",
-        default="data/transfers",
+        default=str(TRANSFER_DATA_DIR),
         help="人事異動CSVを格納したディレクトリ",
     )
     parser.add_argument("--db", default=str(DB_PATH), help="対象DBパス")
