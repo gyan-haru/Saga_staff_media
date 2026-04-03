@@ -1,0 +1,68 @@
+{% extends "admin/base.html" %}
+
+{% block title %}特集記事管理 - 管理画面{% endblock %}
+
+{% block content %}
+<h2>特集記事の作成</h2>
+<form method="POST" action="{{ url_for('admin_interviews') }}" style="margin-bottom: 3rem; background: #f9f9f9; padding: 1.5rem; border-radius: 8px;">
+    <div style="margin-bottom: 1rem;">
+        <label for="person_id" style="display: block; font-weight: bold;">対象人物 (必須)</label>
+        <select name="person_id" id="person_id" required style="width: 100%; padding: 0.5rem;">
+            <option value="">-- 人物を選択 --</option>
+            {% for p in people %}
+            <option value="{{ p.id }}">{{ p.display_name }} ({{ p.person_key }})</option>
+            {% endfor %}
+        </select>
+    </div>
+    
+    <div style="margin-bottom: 1rem;">
+        <label for="project_id" style="display: block; font-weight: bold;">関連企画 (任意)</label>
+        <select name="project_id" id="project_id" style="width: 100%; padding: 0.5rem;">
+            <option value="">-- 関連する企画があれば選択 --</option>
+            {% for prj in projects %}
+            <option value="{{ prj.id }}">{{ prj.title }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div style="margin-bottom: 1rem;">
+        <label for="title" style="display: block; font-weight: bold;">記事タイトル / 見出し (必須)</label>
+        <input type="text" name="title" id="title" required style="width: 100%; padding: 0.5rem;" placeholder="例: なぜ地域交通に関わり続けるのか">
+    </div>
+
+    <div style="margin-bottom: 1rem;">
+        <label for="content" style="display: block; font-weight: bold;">本文 (必須・Markdown対応相当のテキスト)</label>
+        <textarea name="content" id="content" rows="10" required style="width: 100%; padding: 0.5rem;" placeholder="行政の中で何を変えたいのか、思いを記入..."></textarea>
+    </div>
+
+    <button type="submit" style="padding: 0.75rem 2rem; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">記事を投稿する</button>
+</form>
+
+<h2>作成済み記事一覧</h2>
+{% if interviews %}
+<table style="width: 100%; border-collapse: collapse;">
+    <thead>
+        <tr style="background: #eee;">
+            <th style="padding: 0.5rem; text-align: left; border-bottom: 2px solid #ccc;">ID</th>
+            <th style="padding: 0.5rem; text-align: left; border-bottom: 2px solid #ccc;">人物</th>
+            <th style="padding: 0.5rem; text-align: left; border-bottom: 2px solid #ccc;">タイトル</th>
+            <th style="padding: 0.5rem; text-align: left; border-bottom: 2px solid #ccc;">関連企画</th>
+            <th style="padding: 0.5rem; text-align: left; border-bottom: 2px solid #ccc;">公開日</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for iv in interviews %}
+        <tr>
+            <td style="padding: 0.5rem; border-bottom: 1px solid #ddd;">{{ iv.id }}</td>
+            <td style="padding: 0.5rem; border-bottom: 1px solid #ddd;">{{ iv.person_name }}</td>
+            <td style="padding: 0.5rem; border-bottom: 1px solid #ddd;"><strong>{{ iv.title }}</strong></td>
+            <td style="padding: 0.5rem; border-bottom: 1px solid #ddd;">{{ iv.project_title or '-' }}</td>
+            <td style="padding: 0.5rem; border-bottom: 1px solid #ddd;">{{ iv.published_at[:10] }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>まだ特集記事はありません。</p>
+{% endif %}
+{% endblock %}

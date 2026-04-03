@@ -17,85 +17,70 @@
   </div>
   <div class="department-tree">
     {% for group in department_groups %}
-    <section class="dept-group">
-      <div class="dept-group-head">
-        <div>
-          <div class="meta">配下 {{ group['department_count'] }}部署 / 企画 {{ group['project_count'] }}件</div>
-          <h3>
-            {% if group['top_url'] %}
-            <a href="{{ group['top_url'] }}" target="_blank">{{ group['top_unit'] }}</a>
-            {% else %}
-            {{ group['top_unit'] }}
+    <section class="dept-group" style="margin-bottom: 1rem; border: 1px solid #eaeaea; border-radius: 8px; background: #fff;">
+      <details>
+        <summary class="dept-group-head" style="cursor: pointer; list-style: none; padding: 1.5rem; display: flex; justify-content: space-between; align-items: flex-start; margin: 0; outline: none;">
+          <div style="flex-grow: 1;">
+            <div class="meta">配下 {{ group['department_count'] }}部署 / 企画 {{ group['project_count'] }}件</div>
+            <h3 style="margin: 0.5rem 0;">
+              {% if group['top_url'] %}
+              <a href="{{ group['top_url'] }}" target="_blank" onclick="event.stopPropagation();">{{ group['top_unit'] }}</a>
+              {% else %}
+              {{ group['top_unit'] }}
+              {% endif %}
+            </h3>
+            {% if group['representative_themes'] %}
+            <div class="small dept-group-summary" style="color: #666;">代表テーマ: {{ group['representative_themes'][:6]|join(' / ') }}</div>
             {% endif %}
-          </h3>
-          {% if group['representative_themes'] %}
-          <div class="small dept-group-summary">代表テーマ: {{ group['representative_themes'][:6]|join(' / ') }}</div>
-          {% endif %}
-          {% if group['sample_people'] %}
-          <div class="small" style="margin-top: 0.35rem;">見えている人: {{ group['sample_people'][:6]|join(' / ') }}</div>
-          {% endif %}
-        </div>
-        <div class="dept-group-actions">
-          <a class="chip active" href="{{ url_for('network', top_unit=group['top_unit']) }}">この部局のネットワーク</a>
-        </div>
-      </div>
-
-      <div class="dept-group-body">
-        {% for department in group['departments'] %}
-        <article class="dept-leaf">
-          <div class="dept-leaf-title">
-            <div>
-              <div class="meta">
-                {% if department['project_count'] %}企画 {{ department['project_count'] }}件{% endif %}
-                {% if department['appearance_count'] or department['mention_count'] %}
-                / 観測 {{ department['appearance_count'] + department['mention_count'] }}件
+            {% if group['sample_people'] %}
+            <div class="small" style="margin-top: 0.35rem; color: #666;">見えている人: {{ group['sample_people'][:6]|join(' / ') }}</div>
+            {% endif %}
+          </div>
+          <div class="dept-group-actions" style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; min-width: 150px;">
+            <span style="font-size: 1.2rem; color: #888;">▼</span>
+            <a class="chip active" href="{{ url_for('network', top_unit=group['top_unit']) }}" onclick="event.stopPropagation();" style="font-size: 0.8rem;">この部局のネットワーク</a>
+          </div>
+        </summary>
+        <div class="dept-group-body" style="padding: 0 1.5rem 1.5rem 1.5rem; border-top: 1px dashed #eee;">
+          {% for division, items in group['departments']|groupby('child_name') %}
+            {% if division != 'その他' %}
+              <h4 style="margin: 1.5rem 0 0.5rem; font-size: 1.1rem; color: #333; border-bottom: 2px solid #eee; padding-bottom: 0.25rem;">{{ division }}</h4>
+            {% else %}
+              <h4 style="margin: 1.5rem 0 0.5rem; font-size: 1.1rem; color: #888; border-bottom: 2px solid #eee; padding-bottom: 0.25rem;">課名不明・その他</h4>
+            {% endif %}
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem;">
+            {% for department in items %}
+            <article class="dept-leaf" style="margin-bottom: 0; display:flex; flex-direction: column; padding: 1rem; border: 1px solid #f0f0f0; border-radius: 6px; background: #fafafa;">
+              <div class="dept-leaf-title">
+                <div>
+                  <div class="meta">
+                    {% if department['project_count'] %}企画 {{ department['project_count'] }}件{% endif %}
+                    {% if department['appearance_count'] or department['mention_count'] %}
+                    / 観測 {{ department['appearance_count'] + department['mention_count'] }}件
+                    {% endif %}
+                  </div>
+                  <h4 style="margin: 0.25rem 0 0.5rem 0;">
+                    <a href="{{ url_for('department_detail', department_id=department['id']) }}">{{ department['name'] }}</a>
+                    {% if department['child_url'] %}
+                    <a href="{{ department['child_url'] }}" target="_blank" style="font-size: 0.8em; margin-left: 0.5rem; color: #888;">[公式]</a>
+                    {% endif %}
+                  </h4>
+                </div>
+              </div>
+              <div style="margin-top: auto;">
+                {% if department['focus_keywords'] %}
+                <div class="small" style="margin-bottom: 0.35rem; color: #666;">主なテーマ: {{ department['focus_keywords']|join(' / ') }}</div>
+                {% endif %}
+                {% if department['visible_people'] %}
+                <div class="small" style="margin-bottom: 0.35rem;">担当者: {{ department['visible_people'][:4]|join(' / ') }}{% if department['visible_people']|length > 4 %}...{% endif %}</div>
                 {% endif %}
               </div>
-              <h4>
-                {% if department['child_url'] %}
-                <a href="{{ department['child_url'] }}" target="_blank">{{ department['name'] }}</a>
-                {% else %}
-                {{ department['name'] }}
-                {% endif %}
-              </h4>
+            </article>
+            {% endfor %}
             </div>
-          </div>
-          {% if department['profile_summary'] %}
-          <p>{{ department['profile_summary'] }}</p>
-          {% endif %}
-          {% if department['focus_keywords'] %}
-          <div class="small">主なテーマ: {{ department['focus_keywords']|join(' / ') }}</div>
-          {% endif %}
-          {% if department['visible_people'] %}
-          <div class="small" style="margin-top: 0.35rem;">見えている人: {{ department['visible_people'][:6]|join(' / ') }}</div>
-          {% endif %}
-          {% if department['tel'] or department['fax'] %}
-          <div class="small" style="margin-top: 0.35rem;">
-            {% if department['tel'] %}TEL {{ department['tel'] }}{% endif %}
-            {% if department['tel'] and department['fax'] %} / {% endif %}
-            {% if department['fax'] %}FAX {{ department['fax'] }}{% endif %}
-          </div>
-          {% endif %}
-          {% if department['linked_people'] %}
-          <div class="small" style="margin-top: 0.35rem;">
-            確定人物:
-            {% for person in department['linked_people'][:5] %}
-            {% if loop.index > 1 %} / {% endif %}
-            <a href="{{ url_for('person_detail', person_key=person['person_key']) }}">{{ person['display_name'] }}</a>
-            {% endfor %}
-          </div>
-          {% endif %}
-          {% if department['recent_projects'] %}
-          <div class="small" style="margin-top: 0.35rem;">
-            最近の企画:
-            {% for project in department['recent_projects'] %}
-            <div><a href="{{ url_for('project_detail', project_id=project['id']) }}">{{ project['title'] }}</a></div>
-            {% endfor %}
-          </div>
-          {% endif %}
-        </article>
-        {% endfor %}
-      </div>
+          {% endfor %}
+        </div>
+      </details>
     </section>
     {% endfor %}
   </div>

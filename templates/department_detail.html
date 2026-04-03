@@ -1,0 +1,101 @@
+{% extends 'layout.html' %}
+{% block title %}{{ department['name'] }} | 佐賀県 部署データ{% endblock %}
+{% block content %}
+<section class="detail-card" style="border-left: 6px solid #2f8f63; padding-left: 1.5rem; margin-bottom: 2rem;">
+  <h2 style="font-size: 2.2rem; margin-top: 0;">{{ department['name'] }}</h2>
+  <div class="small" style="color: #666; margin-bottom: 1rem;">
+    {% if aliases %}
+    主な表記ゆれ・旧称: {{ aliases|join(' / ') }}
+    {% endif %}
+  </div>
+
+  <div class="stats-grid" style="margin-bottom: 1rem;">
+    <div class="stat-card">
+      <div class="small">関与企画数</div>
+      <div class="stat-value">{{ projects|length }}件</div>
+    </div>
+    <div class="stat-card">
+      <div class="small">注力テーマ</div>
+      <div class="stat-value">{{ topic_rollups|length }}件</div>
+    </div>
+    <div class="stat-card">
+      <div class="small">所属推定人数</div>
+      <div class="stat-value">{{ people|length + candidate_people|length }}人</div>
+    </div>
+  </div>
+</section>
+
+{% if topic_rollups %}
+<section class="detail-card">
+  <div class="section-head">
+    <h3>チームの注力領域・テーマ</h3>
+    <div class="small">この部署が手がけた企画によく紐づく政策テーマ</div>
+  </div>
+  <div class="cards" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
+    {% for item in topic_rollups %}
+    <article class="card">
+      <div class="meta">
+        {% if item['topic_year'] %}{{ item['topic_year'] }} / {% endif %}
+        {{ '重点施策' if item['priority_count'] else '推定テーマ' }}
+      </div>
+      <h4><a href="{{ url_for('topics') }}">{{ item['topic_name'] }}</a></h4>
+      <div class="small">関連案件: {{ item['project_count'] }}件</div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<div class="detail-grid" style="gap: 2rem;">
+  <div class="list-panel">
+    <h3>過去の担当企画</h3>
+    {% if projects %}
+    <div class="history-list">
+      {% for project in projects %}
+      <div class="row" style="margin-bottom: 1rem;">
+        <div>
+          <div class="meta" style="font-size: 0.85em; color: #888;">{{ project['source_type'] }} / {% if project['published_at'] %}{{ project['published_at'][:10] }}{% endif %}</div>
+          <div><a href="{{ url_for('project_detail', project_id=project['id']) }}" style="font-weight: bold; color: #333;">{{ project['title'] }}</a></div>
+          <div class="small" style="color: #666;">抽出名: {{ project['raw_department_name'] }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p>担当企画が見つかりませんでした。</p>
+    {% endif %}
+  </div>
+
+  <div class="list-panel">
+    <h3>所属が推定される人物</h3>
+    <p class="small" style="margin-bottom: 1rem;">この部署が関わる企画に名前が登場した担当者です。異動済みの人物も含まれます。</p>
+    {% if people or candidate_people %}
+    <div class="history-list">
+      {% for p in people %}
+      <div class="row">
+        <div>
+          <div><a href="{{ url_for('person_detail', person_key=p['person_key']) }}" style="font-weight: bold;">{{ p['display_name'] }}</a></div>
+          <div class="small" style="color: #666;">登場した企画: {{ p['project_count'] }}件 / 最終確認: {{ p['latest_project_date'] or '不明' }}</div>
+        </div>
+      </div>
+      {% endfor %}
+      
+      {% if candidate_people %}
+      <hr style="margin: 1.5rem 0; border:0; border-top: 1px dashed #ccc;">
+      <h4 style="margin-bottom: 0.5rem; font-size: 1rem;">名前のみ抽出（名寄せ前）</h4>
+      {% for cp in candidate_people %}
+      <div class="row">
+        <div>
+          <div style="color: #555;">{{ cp['name'] }}</div>
+          <div class="small" style="color: #999;">登場した企画: {{ cp['count'] }}件</div>
+        </div>
+      </div>
+      {% endfor %}
+      {% endif %}
+    </div>
+    {% else %}
+    <p>担当者が見つかりませんでした。</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

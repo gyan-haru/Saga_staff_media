@@ -1,13 +1,32 @@
 {% extends 'layout.html' %}
 {% block title %}ホーム | 佐賀県 企画×担当者アーカイブ{% endblock %}
 {% block content %}
-<section class="hero">
-  <h2>企画から人を見るための下地</h2>
-  <p>コンペやプレスリリースを蓄積し、担当者ページから関与企画の一覧をたどれる状態まで進めた版です。</p>
+<section class="hero" style="border-left: 6px solid #b84c65; padding-left: 1.5rem;">
+  <h2>企画思想の発見と、行政の意思</h2>
+  <p>佐賀県で動いている面白い公共企画と、その担い手に光を当てます。どの部署の人間かという事実以上に、「なぜそのテーマをやるのか」「何を変えたいのか」という行政官の思想を紐解くためのメディア基盤です。</p>
 </section>
+
+{% if interviews %}
+<section style="margin-bottom: 3rem; background: #fffafb; padding: 1.5rem; border: 1px solid #f2e3e5; border-radius: 8px;">
+  <div class="section-head">
+    <h3 style="color: #b84c65; margin-top: 0;">注目の特集記事・インタビュー</h3>
+  </div>
+  <div class="cards">
+    {% for iv in interviews[:4] %}
+    <article class="card" style="box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+      <div class="meta">公開日: {{ iv.published_at[:10] }}{% if iv.project_title %} / 関連案件: {{ iv.project_title }}{% endif %}</div>
+      <h4><a href="{{ url_for('person_detail', person_key=(people | selectattr('id', 'equalto', iv.person_id) | map(attribute='person_key') | first) or '') }}" style="color: #333;">{{ iv.title }}</a></h4>
+      <p style="color: #555;">{{ iv.person_name }}</p>
+      <div class="small" style="color: #777; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;">{{ iv.content }}</div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
 <section>
   <div class="section-head">
-    <h3>最近の企画</h3>
+    <h3>最近の公共企画</h3>
     <a href="{{ url_for('projects', source_type=source_type) }}">すべて見る</a>
   </div>
   <div class="cards">
@@ -17,7 +36,11 @@
       <h4><a href="{{ url_for('project_detail', project_id=project['id']) }}">{{ project['title'] }}</a></h4>
       <p>{{ project['summary'] or '概要未抽出' }}</p>
       <div class="small">
+        {% if project['department_id'] %}
+        <a href="{{ url_for('department_detail', department_id=project['department_id']) }}">{{ project['display_department_name'] or '部署不明' }}</a>
+        {% else %}
         {{ project['display_department_name'] or '部署不明' }}
+        {% endif %}
         {% if project['department_status_label'] %}
         <span>({{ project['department_status_label'] }})</span>
         {% endif %}

@@ -458,6 +458,19 @@ def init_db(db_path: Path | str = DB_PATH) -> None:
                 FOREIGN KEY(topic_id) REFERENCES policy_topics(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS interviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id INTEGER NOT NULL,
+                project_id INTEGER,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                published_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(person_id) REFERENCES people(id) ON DELETE CASCADE,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_projects_source_type ON projects(source_type);
             CREATE INDEX IF NOT EXISTS idx_projects_published_at ON projects(published_at);
             CREATE INDEX IF NOT EXISTS idx_department_aliases_department_id ON department_aliases(department_id);
@@ -486,6 +499,8 @@ def init_db(db_path: Path | str = DB_PATH) -> None:
             CREATE INDEX IF NOT EXISTS idx_topic_source_mentions_topic_id ON topic_source_mentions(topic_id);
             CREATE INDEX IF NOT EXISTS idx_person_topic_rollups_person_id ON person_topic_rollups(person_id);
             CREATE INDEX IF NOT EXISTS idx_person_topic_rollups_topic_year ON person_topic_rollups(topic_year);
+            CREATE INDEX IF NOT EXISTS idx_interviews_person_id ON interviews(person_id);
+            CREATE INDEX IF NOT EXISTS idx_interviews_project_id ON interviews(project_id);
             """
         )
         conn.commit()
@@ -1580,6 +1595,7 @@ def fetch_department_profiles(limit: int = 200, db_path: Path | str = DB_PATH) -
                     "normalized_name": row["normalized_name"] or "",
                     "top_unit": metadata.get("top_unit", "未分類"),
                     "top_url": metadata.get("top_url", ""),
+                    "child_name": metadata.get("child_name", "その他") or "その他",
                     "child_url": metadata.get("child_url", ""),
                     "tel": metadata.get("tel", ""),
                     "fax": metadata.get("fax", ""),
@@ -3600,7 +3616,7 @@ def fetch_projects(limit: int = 100, source_type: str | None = None) -> list[dic
         if source_type:
             rows = conn.execute(
                 """
-                SELECT p.*, a.raw_department_name, a.raw_person_name, pe.person_key
+                SELECT p.*, a.raw_department_name, a.department_id as resolved_department_id, a.raw_person_name, pe.person_key
                 FROM projects p
                 LEFT JOIN appearances a ON a.project_id = p.id
                 LEFT JOIN people pe ON pe.id = a.person_id
@@ -3613,7 +3629,7 @@ def fetch_projects(limit: int = 100, source_type: str | None = None) -> list[dic
         else:
             rows = conn.execute(
                 """
-                SELECT p.*, a.raw_department_name, a.raw_person_name, pe.person_key
+                SELECT p.*, a.raw_department_name, a.department_id as resolved_department_id, a.raw_person_name, pe.person_key
                 FROM projects p
                 LEFT JOIN appearances a ON a.project_id = p.id
                 LEFT JOIN people pe ON pe.id = a.person_id
@@ -3627,6 +3643,7 @@ def fetch_projects(limit: int = 100, source_type: str | None = None) -> list[dic
         for item in payload:
             resolved = resolve_public_appearance(conn, item, item)
             item["display_department_name"] = resolved["display_department_name"] if resolved else ""
+            item["department_id"] = item.get("resolved_department_id")
             item["display_person_name"] = resolved["display_person_name"] if resolved else ""
             item["display_person_key"] = resolved["display_person_key"] if resolved else ""
             item["person_status"] = resolved["person_status"] if resolved else "missing"
@@ -4332,17 +4349,17 @@ def fetch_network_snapshot(
         for node in node_map.values():
             base_size = {
                 "project": 10,
-                "department": 18,
-                "person": 16,
+                "department": 16,
+                "person": 18,
                 "candidate_person": 13,
-                "topic": 14,
+                "topic": 22,
             }.get(node["type"], 12)
             growth = {
                 "project": min(node["weight"], 2),
-                "department": min(node["weight"] * 2, 18),
-                "person": min(node["weight"] * 2, 16),
+                "department": min(node["weight"] * 2, 16),
+                "person": min(node["weight"] * 2.5, 20),
                 "candidate_person": min(node["weight"] * 2, 12),
-                "topic": min(node["weight"] * 2, 14),
+                "topic": min(node["weight"] * 3, 24),
             }.get(node["type"], min(node["weight"], 6))
             node["size"] = base_size + growth
             nodes.append(node)
@@ -4760,6 +4777,17 @@ def fetch_person_detail(person_key: str, db_path: Path | str = DB_PATH) -> dict[
             "focus_topic_names": [item["topic_name"] for item in topic_rollups[:5]],
         }
 
+        interviews = conn.execute(
+            """
+            SELECT i.*, pr.title AS project_title 
+            FROM interviews i
+            LEFT JOIN projects pr ON pr.id = i.project_id
+            WHERE i.person_id = ?
+            ORDER BY i.published_at DESC
+            """,
+            (person["id"],),
+        ).fetchall()
+
         return {
             "person": dict(person),
             "projects": [dict(item) for item in projects],
@@ -4770,6 +4798,7 @@ def fetch_person_detail(person_key: str, db_path: Path | str = DB_PATH) -> dict[
             "related_people": related_people,
             "topic_rollups": [dict(item) for item in topic_rollups],
             "topic_summary": topic_summary,
+            "interviews": [dict(item) for item in interviews],
         }
     finally:
         conn.close()
@@ -6713,5 +6742,135 @@ def fetch_departments(db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
             ORDER BY d.name
             """
         ).fetchall()
+    finally:
+        conn.close()
+
+def save_interview(person_id: int, title: str, content: str, project_id: int | None = None, db_path: Path | str = DB_PATH) -> int:
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            """
+            INSERT INTO interviews (person_id, project_id, title, content)
+            VALUES (?, ?, ?, ?)
+            """,
+            (person_id, project_id, title, content)
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+def fetch_interview(interview_id: int, db_path: Path | str = DB_PATH) -> dict[str, Any] | None:
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT i.*, p.display_name AS person_name, pr.title AS project_title
+            FROM interviews i
+            LEFT JOIN people p ON p.id = i.person_id
+            LEFT JOIN projects pr ON pr.id = i.project_id
+            WHERE i.id = ?
+            """,
+            (interview_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+def fetch_interviews(db_path: Path | str = DB_PATH) -> list[dict[str, Any]]:
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT i.*, p.display_name AS person_name, pr.title AS project_title
+            FROM interviews i
+            LEFT JOIN people p ON p.id = i.person_id
+            LEFT JOIN projects pr ON pr.id = i.project_id
+            ORDER BY i.published_at DESC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+def fetch_department_detail(department_id: int, db_path: Path | str = DB_PATH) -> dict[str, Any] | None:
+    conn = get_connection(db_path)
+    try:
+        dept = conn.execute("SELECT * FROM departments WHERE id = ?", (department_id,)).fetchone()
+        if not dept:
+            return None
+
+        aliases = conn.execute("SELECT alias_name FROM department_aliases WHERE department_id = ? ORDER BY alias_name", (department_id,)).fetchall()
+        alias_names = [r["alias_name"] for r in aliases]
+
+        projects = conn.execute(
+            """
+            SELECT p.*, MAX(a.raw_department_name) as raw_department_name
+            FROM projects p
+            JOIN appearances a ON a.project_id = p.id
+            WHERE a.department_id = ?
+            GROUP BY p.id
+            ORDER BY COALESCE(NULLIF(p.published_at, ''), substr(p.fetched_at, 1, 10)) DESC
+            """,
+            (department_id,),
+        ).fetchall()
+        project_ids = [int(r["id"]) for r in projects]
+
+        topic_rollups = []
+        if project_ids:
+            placeholders = ",".join("?" for _ in project_ids)
+            topic_rows = conn.execute(
+                f"""
+                SELECT 
+                    pt.id as topic_id, pt.name as topic_name, pt.topic_year, pt.origin_type,
+                    COUNT(DISTINCT ptl.project_id) as project_count,
+                    SUM(ptl.is_priority) as priority_count
+                FROM project_topic_links ptl
+                JOIN policy_topics pt ON pt.id = ptl.topic_id
+                WHERE ptl.project_id IN ({placeholders})
+                GROUP BY pt.id
+                ORDER BY priority_count DESC, project_count DESC, pt.name ASC
+                LIMIT 20
+                """,
+                project_ids
+            ).fetchall()
+            topic_rollups = [dict(r) for r in topic_rows]
+
+        people = conn.execute(
+            """
+            SELECT 
+                pe.id, pe.person_key, pe.display_name,
+                COUNT(DISTINCT a.project_id) as project_count,
+                MAX(COALESCE(NULLIF(p.published_at, ''), substr(p.fetched_at, 1, 10))) as latest_project_date
+            FROM appearances a
+            JOIN people pe ON pe.id = a.person_id
+            LEFT JOIN projects p ON p.id = a.project_id
+            WHERE a.department_id = ?
+            GROUP BY pe.id
+            ORDER BY project_count DESC, latest_project_date DESC
+            """,
+            (department_id,),
+        ).fetchall()
+
+        candidate_people_rows = conn.execute(
+            """
+            SELECT raw_person_name, COUNT(DISTINCT project_id) as project_count
+            FROM appearances
+            WHERE department_id = ? AND person_id IS NULL AND raw_person_name IS NOT NULL AND raw_person_name != ''
+            GROUP BY raw_person_name
+            ORDER BY project_count DESC
+            LIMIT 30
+            """,
+            (department_id,),
+        ).fetchall()
+
+        return {
+            "department": dict(dept),
+            "aliases": alias_names,
+            "projects": [dict(p) for p in projects],
+            "topic_rollups": topic_rollups,
+            "people": [dict(p) for p in people],
+            "candidate_people": [{"name": r["raw_person_name"], "count": r["project_count"]} for r in candidate_people_rows],
+        }
     finally:
         conn.close()

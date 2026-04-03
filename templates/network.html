@@ -2,15 +2,15 @@
 {% block title %}ネットワーク | 佐賀県 企画×担当者アーカイブ{% endblock %}
 {% block content %}
 <section class="detail-card">
-  <h2>企画と部署のネットワーク</h2>
+  <h2>思想と企画のネットワーク</h2>
   <p class="small">
-    最近の企画を中心に、担当部署と担当者を部局クラスターへ寄せて可視化したビューです。
-    線は「その企画を誰が担ったか」「どの部署に属するか」を表します。
+    「観光」「若者」「食」といったテーマ（思想）を中心に、どんな案件が動き、どの部署や担当者が関わったのかを可視化したマップです。
+    色と大きさは、そのテーマに集まる人の意思や関連企画の数に応じて変化します。
   </p>
   {% if selected_top_unit %}
   <div class="network-filter-banner">
     <div>
-      <strong>{{ selected_top_unit }}</strong> に関係する企画・部署・人物だけを表示しています。
+      <strong>{{ selected_top_unit }}</strong> に関係する企画・部署・人物・テーマだけを表示しています。
     </div>
     <a class="chip" href="{{ url_for('network') }}">全体に戻る</a>
   </div>
@@ -42,24 +42,24 @@
 <section class="detail-card">
   <div class="section-head">
     <div>
-      <h3>クラスター型ネットワーク</h3>
-      <div class="small">色は部局、丸の大きさは接続数に応じて変わります</div>
+      <h3>テーマ・クラスター型ネットワーク</h3>
+      <div class="small">ノードの種類を切り替えて、思想と人の繋がりを確認できます</div>
     </div>
     <div class="network-filters">
-      <button class="chip active" type="button" data-network-toggle="project">企画</button>
-      <button class="chip active" type="button" data-network-toggle="department">部署</button>
-      <button class="chip active" type="button" data-network-toggle="person">確定人物</button>
-      <button class="chip active" type="button" data-network-toggle="candidate_person">候補人物</button>
       <button class="chip active" type="button" data-network-toggle="topic">テーマ</button>
+      <button class="chip active" type="button" data-network-toggle="person">担当者</button>
+      <button class="chip active" type="button" data-network-toggle="project">企画</button>
+      <button class="chip" type="button" data-network-toggle="department">部署</button>
+      <button class="chip" type="button" data-network-toggle="candidate_person">候補人物</button>
     </div>
   </div>
 
   <div class="network-legend">
+    <span><i class="legend-swatch legend-topic"></i>テーマ</span>
+    <span><i class="legend-swatch legend-person"></i>担当者</span>
     <span><i class="legend-swatch legend-project"></i>企画</span>
     <span><i class="legend-swatch legend-department"></i>部署</span>
-    <span><i class="legend-swatch legend-person"></i>確定人物</span>
     <span><i class="legend-swatch legend-candidate"></i>候補人物</span>
-    <span><i class="legend-swatch legend-topic"></i>テーマ</span>
   </div>
 
   <div class="network-stage">
@@ -147,7 +147,7 @@
   const graph = JSON.parse(dataElement.textContent || "{}");
   const baseNodes = Array.isArray(graph.nodes) ? graph.nodes : [];
   const baseEdges = Array.isArray(graph.edges) ? graph.edges : [];
-  const enabledTypes = new Set(["project", "department", "person", "candidate_person", "topic"]);
+  const enabledTypes = new Set(["project", "person", "topic"]);
   const buttons = Array.from(document.querySelectorAll("[data-network-toggle]"));
   const svgNS = "http://www.w3.org/2000/svg";
   const width = 1200;

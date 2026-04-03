@@ -25,6 +25,10 @@ from database import (
     merge_people,
     group_department_profiles_by_top_unit,
     update_project_review,
+    fetch_interviews,
+    save_interview,
+    fetch_interview,
+    fetch_department_detail,
 )
 
 app = Flask(__name__)
@@ -55,7 +59,8 @@ def index():
     source_type = request.args.get("source_type") or None
     projects = fetch_projects(limit=200, source_type=source_type)
     people = fetch_people(limit=20)
-    return render_template("index.html", projects=projects, people=people, source_type=source_type)
+    interviews = fetch_interviews()
+    return render_template("index.html", projects=projects, people=people, source_type=source_type, interviews=interviews)
 
 
 @app.route("/projects")
@@ -90,6 +95,14 @@ def departments():
     rows = fetch_department_profiles()
     groups = group_department_profiles_by_top_unit(rows)
     return render_template("departments.html", departments=rows, department_groups=groups)
+
+
+@app.route("/departments/<int:department_id>")
+def department_detail(department_id: int):
+    payload = fetch_department_detail(department_id)
+    if not payload:
+        abort(404)
+    return render_template("department_detail.html", **payload)
 
 
 @app.route("/network")
@@ -207,6 +220,24 @@ def admin_departments():
         
     departments = fetch_departments()
     return render_template("admin/departments.html", departments=departments)
+
+
+@app.route("/admin/interviews", methods=["GET", "POST"])
+@requires_auth
+def admin_interviews():
+    if request.method == "POST":
+        person_id = request.form.get("person_id", type=int)
+        project_id = request.form.get("project_id", type=int)
+        title = request.form.get("title", "")
+        content = request.form.get("content", "")
+        if person_id and title and content:
+            save_interview(person_id, title, content, project_id)
+        return redirect(url_for("admin_interviews"))
+    
+    interviews = fetch_interviews()
+    people = fetch_people(limit=500)
+    projects = fetch_projects(limit=500)
+    return render_template("admin/interviews.html", interviews=interviews, people=people, projects=projects)
 
 
 if __name__ == "__main__":
